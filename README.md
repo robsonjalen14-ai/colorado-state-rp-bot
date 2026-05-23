@@ -14,7 +14,7 @@ No Discord Gateway, no websocket connection, and no external database.
 - Direct `appid.zip` is returned as-is.
 - Direct `appid.lua` is zipped in memory as `appid.zip` containing `appid.lua`.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
-- Shows Steam game details with generated files.
+- Shows Steam game details in a Discord embed with the game banner, source, AppID, publisher, and release date.
 - Moderator/request storage uses a Cloudflare Durable Object.
 - Full moderation command set with audit logs.
 

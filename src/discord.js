@@ -94,26 +94,29 @@ export async function sendChannelMessage(env, channelId, content) {
   });
 }
 
-export async function editOriginalInteraction(env, interaction, content, file = null) {
+export async function editOriginalInteraction(env, interaction, content, file = null, options = {}) {
   const url = `${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
 
   async function upload() {
+    const payload = {
+      content: truncate(content || "", file ? 1800 : 1900),
+      embeds: options.embeds || [],
+      attachments: file ? [{ id: 0, filename: file.filename }] : []
+    };
+
     if (!file) {
       const response = await fetchWithTimeout(url, {
         method: "PATCH",
         timeout: 20000,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: truncate(content, 1900), attachments: [] })
+        body: JSON.stringify(payload)
       });
       if (!response.ok) throw new Error(`Interaction edit failed: HTTP ${response.status}`);
       return response.json();
     }
 
     const form = new FormData();
-    form.append("payload_json", JSON.stringify({
-      content: truncate(content, 1800),
-      attachments: [{ id: 0, filename: file.filename }]
-    }));
+    form.append("payload_json", JSON.stringify(payload));
     form.append("files[0]", new Blob([file.bytes], { type: file.contentType || "application/zip" }), file.filename);
 
     const response = await fetchWithTimeout(url, {

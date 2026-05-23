@@ -18,7 +18,7 @@ import {
   storeAndSendModLog,
   verifyDiscordRequest
 } from "./discord.js";
-import { fetchGameDetails, formatGameDetails, lookupPackage } from "./github.js";
+import { fetchGameDetails, lookupPackage } from "./github.js";
 import {
   PERMISSIONS,
   getOptionValue,
@@ -36,6 +36,35 @@ const INTERACTION_TYPE = {
   PING: 1,
   APPLICATION_COMMAND: 2
 };
+
+function gameEmbed(game, source = null) {
+  const fields = [
+    { name: "App ID", value: String(game.appId), inline: true },
+    {
+      name: "Publisher",
+      value: game.publishers.length ? truncate(game.publishers.join(", "), 1000) : "Unknown",
+      inline: true
+    },
+    { name: "Release Date", value: game.releaseDate || "Unknown", inline: true }
+  ];
+
+  if (source) {
+    fields.push({ name: "Source", value: source, inline: true });
+  }
+
+  const embed = {
+    title: game.name || `Steam App ${game.appId}`,
+    color: 0x05fff7,
+    fields,
+    footer: { text: "Charon Manifest Tool" }
+  };
+
+  if (game.banner) {
+    embed.image = { url: game.banner };
+  }
+
+  return embed;
+}
 
 export class BotStorage {
   constructor(state) {
@@ -104,23 +133,18 @@ async function handleGenCommand(env, interaction) {
   ]);
 
   if (!result) {
-    await editOriginalInteraction(env, interaction, [
-      `❌ No files found for AppID ${appId}`,
-      "",
-      formatGameDetails(game)
-    ].join("\n"));
+    await editOriginalInteraction(env, interaction, `❌ No files found for AppID ${appId}`, null, {
+      embeds: [gameEmbed(game)]
+    });
     return;
   }
 
-  await editOriginalInteraction(env, interaction, [
-    `✅ Generated for AppID ${appId}`,
-    `Source: ${result.source}`,
-    "",
-    formatGameDetails(game)
-  ].join("\n"), {
+  await editOriginalInteraction(env, interaction, `✅ Generated for AppID ${appId}`, {
     filename: result.fileName || `${appId}.zip`,
     bytes: result.bytes,
     contentType: "application/zip"
+  }, {
+    embeds: [gameEmbed(game, result.source)]
   });
 }
 
