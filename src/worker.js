@@ -275,10 +275,7 @@ async function handleGenCommand(env, interaction) {
 
   if (result.downloadUrl && !result.bytes) {
     await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [
-        messageEmbed("Generated", `External API found AppID **${appId}**.\nGameGen blocks Cloudflare from attaching the ZIP directly, so use the button below.`, SUCCESS),
-        gameEmbed(game, result.source)
-      ],
+      embeds: [gameEmbed(game, result.source)],
       components: downloadButton(result.downloadUrl)
     });
     return;
