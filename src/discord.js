@@ -24,6 +24,16 @@ export const FLAGS = {
   EPHEMERAL: 1 << 6
 };
 
+function standardEmbed(content, color = 0x05fff7) {
+  return {
+    title: "Charon",
+    description: truncate(content || "Done.", 4000),
+    color,
+    timestamp: new Date().toISOString(),
+    footer: { text: "Charon Bot" }
+  };
+}
+
 export async function verifyDiscordRequest(request, env, body) {
   const signature = request.headers.get("x-signature-ed25519");
   const timestamp = request.headers.get("x-signature-timestamp");
@@ -41,11 +51,12 @@ export function pong() {
   return json({ type: InteractionResponseType.PONG });
 }
 
-export function messageResponse(content, ephemeral = true) {
+export function messageResponse(content, ephemeral = true, options = {}) {
   return json({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      content: truncate(content),
+      content: "",
+      embeds: options.embeds || [standardEmbed(content, options.color)],
       flags: ephemeral ? FLAGS.EPHEMERAL : undefined
     }
   });
@@ -88,11 +99,12 @@ export async function discordApi(env, path, options = {}) {
 }
 
 export async function sendChannelMessage(env, channelId, content, options = {}) {
+  const embeds = options.embeds || (content ? [standardEmbed(content, options.color)] : []);
   return discordApi(env, `/channels/${channelId}/messages`, {
     method: "POST",
     body: {
-      content: truncate(content || "", 1900),
-      embeds: options.embeds || []
+      content: options.rawContent ? truncate(content || "", 1900) : "",
+      embeds
     }
   });
 }
@@ -102,8 +114,8 @@ export async function editOriginalInteraction(env, interaction, content, file = 
 
   async function upload() {
     const payload = {
-      content: truncate(content || "", file ? 1800 : 1900),
-      embeds: options.embeds || [],
+      content: options.rawContent ? truncate(content || "", file ? 1800 : 1900) : "",
+      embeds: options.embeds || (content ? [standardEmbed(content, options.color)] : []),
       components: options.components || [],
       attachments: file ? [{ id: 0, filename: file.filename }] : []
     };

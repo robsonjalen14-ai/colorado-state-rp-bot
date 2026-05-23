@@ -112,6 +112,16 @@ function embed(title, fields = [], color = SUCCESS) {
   };
 }
 
+function messageEmbed(title, description, color = SUCCESS) {
+  return {
+    title,
+    description: truncate(description || "Done.", 4000),
+    color,
+    timestamp: new Date().toISOString(),
+    footer: { text: "Charon Bot" }
+  };
+}
+
 function gameEmbed(game, source = null) {
   const fields = [
     { name: "App ID", value: String(game.appId), inline: true },
@@ -155,11 +165,16 @@ function downloadButton(url) {
 
 async function sendResult(env, interaction, result) {
   if (typeof result === "string") {
-    await editOriginalInteraction(env, interaction, result);
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [messageEmbed("Charon", result)]
+    });
     return;
   }
-  await editOriginalInteraction(env, interaction, result.content || "", result.file || null, {
-    embeds: result.embeds || []
+  const embeds = [...(result.embeds || [])];
+  if (result.content) embeds.unshift(messageEmbed("Charon", result.content));
+  await editOriginalInteraction(env, interaction, "", result.file || null, {
+    embeds,
+    components: result.components || []
   });
 }
 
@@ -239,7 +254,9 @@ async function handleRequestCommand(env, interaction) {
 
 async function handleGenCommand(env, interaction) {
   const appId = normalizeAppId(getOptionValue(interaction.data.options, "appid"));
-  await editOriginalInteraction(env, interaction, "Generating...");
+  await editOriginalInteraction(env, interaction, "", null, {
+    embeds: [messageEmbed("Generating", `Preparing manifest package for AppID **${appId}**...`, MOD)]
+  });
 
   const [game, result] = await Promise.all([
     fetchGameDetails(appId),
@@ -247,30 +264,35 @@ async function handleGenCommand(env, interaction) {
   ]);
 
   if (!result) {
-    await editOriginalInteraction(env, interaction, `No files found for AppID ${appId}`, null, {
-      embeds: [gameEmbed(game)]
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [
+        messageEmbed("No Files Found", `No manifest package was found for AppID **${appId}**.`, WARN),
+        gameEmbed(game)
+      ]
     });
     return;
   }
 
   if (result.downloadUrl && !result.bytes) {
-    await editOriginalInteraction(env, interaction, [
-      `Generated for AppID ${appId}`,
-      "External API found the file, but GameGen blocks Cloudflare from attaching it directly.",
-      "Use the Download ZIP button below."
-    ].join("\n"), null, {
-      embeds: [gameEmbed(game, result.source)],
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [
+        messageEmbed("Generated", `External API found AppID **${appId}**.\nGameGen blocks Cloudflare from attaching the ZIP directly, so use the button below.`, SUCCESS),
+        gameEmbed(game, result.source)
+      ],
       components: downloadButton(result.downloadUrl)
     });
     return;
   }
 
-  await editOriginalInteraction(env, interaction, `Generated for AppID ${appId}`, {
+  await editOriginalInteraction(env, interaction, "", {
     filename: result.fileName || `${appId}.zip`,
     bytes: result.bytes,
     contentType: "application/zip"
   }, {
-    embeds: [gameEmbed(game, result.source)]
+    embeds: [
+      messageEmbed("Generated", `Manifest package generated for AppID **${appId}**.`, SUCCESS),
+      gameEmbed(game, result.source)
+    ]
   });
 }
 
@@ -989,7 +1011,9 @@ async function completeDeferredCommand(env, interaction) {
     const result = await runCommand(env, interaction);
     await sendResult(env, interaction, result);
   } catch (error) {
-    await editOriginalInteraction(env, interaction, error.message || "Command failed.");
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [messageEmbed("Command Failed", error.message || "Command failed.", DANGER)]
+    });
   }
 }
 
@@ -1033,7 +1057,9 @@ export async function handleInteraction(request, env, ctx) {
 
   if (interaction.data.name === "gen") {
     ctx.waitUntil(handleGenCommand(env, interaction).catch((error) =>
-      editOriginalInteraction(env, interaction, error.message || "Generation failed.").catch(console.error)
+      editOriginalInteraction(env, interaction, "", null, {
+        embeds: [messageEmbed("Generation Failed", error.message || "Generation failed.", DANGER)]
+      }).catch(console.error)
     ));
     return deferredResponse(false);
   }
