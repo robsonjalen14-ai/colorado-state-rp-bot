@@ -54,6 +54,12 @@ function gameEmbed(game, source = null) {
 
   const embed = {
     title: game.name || `Steam App ${game.appId}`,
+    description: [
+      `App ID: ${game.appId}`,
+      `Publisher: ${game.publishers.length ? truncate(game.publishers.join(", "), 1000) : "Unknown"}`,
+      `Release Date: ${game.releaseDate || "Unknown"}`,
+      source ? `Source: ${source}` : null
+    ].filter(Boolean).join("\n"),
     color: 0x05fff7,
     fields,
     footer: { text: "Charon Manifest Tool" }

@@ -210,13 +210,31 @@ export async function fetchGameDetails(appId) {
     })
   );
 
-  return Promise.any([steamPromise, spyPromise]).catch(() => ({
+  const settled = await Promise.allSettled([steamPromise, spyPromise]);
+  const games = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+
+  if (games.length) {
+    return games.sort((a, b) => gameDetailScore(b) - gameDetailScore(a))[0];
+  }
+
+  return {
     appId,
     name: `Steam App ${appId}`,
     publishers: [],
     releaseDate: "Unknown",
     banner: steamAsset(appId, "header.jpg")
-  }));
+  };
+}
+
+function gameDetailScore(game) {
+  let score = 0;
+  if (game.name && game.name !== `Steam App ${game.appId}`) score += 3;
+  if (game.releaseDate && game.releaseDate !== "Unknown") score += 3;
+  if (game.publishers.length) score += 2;
+  if (game.banner && !game.banner.endsWith("/header.jpg")) score += 1;
+  return score;
 }
 
 export function formatGameDetails(game) {
