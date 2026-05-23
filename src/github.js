@@ -105,7 +105,7 @@ async function findIndexedZip(env, appId) {
 
 async function resolveExternalApi(env, appId) {
   const directUrl = env.GAMEGEN_API_URL
-    ? env.GAMEGEN_API_URL.replace("{APP_ID}", appId)
+    ? buildGameGenGenerateUrl(env.GAMEGEN_API_URL, appId)
     : null;
   const keyedUrl = env.GAMEGEN_API_KEY
     ? `${(env.GAMEGEN_API_BASE || "https://gamegen.lol/api").replace(/\/$/, "")}/${env.GAMEGEN_API_KEY}/generate/${appId}`
@@ -113,20 +113,57 @@ async function resolveExternalApi(env, appId) {
   const url = directUrl || keyedUrl;
   if (!url) return null;
 
-  const data = await fetchJsonAny(url, 15000);
-  const downloadUrl =
-    data?.data?.manifest?.downloadUrl ||
-    data?.manifest?.downloadUrl ||
-    data?.downloadUrl ||
-    data?.download_url;
-  if (!downloadUrl) return null;
-  const bytes = await downloadBytes(downloadUrl, 30000);
+  try {
+    const data = await fetchJsonAny(url, 15000);
+    if (data?.success === false) return null;
+    const downloadUrl =
+      data?.data?.manifest?.downloadUrl ||
+      data?.manifest?.downloadUrl ||
+      data?.downloadUrl ||
+      data?.download_url;
+    if (downloadUrl) {
+      return {
+        source: "Used External API",
+        kind: "api",
+        fileName: `${appId}.zip`,
+        bytes: await downloadBytes(absoluteFromUrl(url, downloadUrl), 30000)
+      };
+    }
+  } catch {
+    // Fall through to the direct ZIP endpoint. GameGen may keep ZIP output healthy
+    // while the JSON generate response is temporarily unavailable.
+  }
+
+  const zipResponse = await fetchWithTimeout(withQuery(url, "format", "zip"), {
+    timeout: 30000,
+    headers: { Accept: "application/zip" }
+  });
+  if (!zipResponse.ok) return null;
   return {
     source: "Used External API",
     kind: "api",
     fileName: `${appId}.zip`,
-    bytes
+    bytes: new Uint8Array(await zipResponse.arrayBuffer())
   };
+}
+
+export function buildGameGenGenerateUrl(baseUrl, appId) {
+  const raw = String(baseUrl || "").trim();
+  if (!raw) return "";
+  if (raw.includes("{APP_ID}")) return raw.replace("{APP_ID}", appId);
+  return `${raw.replace(/\/+$/, "")}/${appId}`;
+}
+
+function absoluteFromUrl(baseUrl, value) {
+  const raw = String(value || "");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return new URL(raw, baseUrl).toString();
+}
+
+function withQuery(url, key, value) {
+  const result = new URL(url);
+  result.searchParams.set(key, value);
+  return result.toString();
 }
 
 export async function lookupPackage(env, appId) {

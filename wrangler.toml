@@ -6,7 +6,7 @@ compatibility_date = "2026-05-23"
 DISCORD_PUBLIC_KEY = "3d073f5be99498a91f0962cb715f56ad8e915bd2e9f58739e3bf6482093ef469"
 DISCORD_APPLICATION_ID = "947389898531430421"
 REQUEST_CHANNEL = "1507608145021632542"
-MOD_LOG_CHANNEL = "1507608145021632542"
+MOD_LOG_CHANNEL = "1507761568891404308"
 DATABASE_1_URL = "https://raw.githubusercontent.com/BlissBlender/Charon-Database/main/database-1/"
 DATABASE_2_URL = "https://raw.githubusercontent.com/BlissBlender/Charon-Database/main/database-2/"
 DATABASE_BASE_PATHS = ",manifests"
@@ -19,3 +19,6 @@ class_name = "BotStorage"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["BotStorage"]
+
+[triggers]
+crons = ["*/5 * * * *"]

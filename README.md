@@ -10,13 +10,14 @@ No Discord Gateway, no websocket connection, and no external database.
 - `/gen appid:<number>` searches the Charon database in order:
   1. Database 1
   2. Database 2
-  3. GameGen external API
+  3. GameGen external API, including direct ZIP fallback with `format=zip`
 - Direct `appid.zip` is returned as-is.
 - Direct `appid.lua` is zipped in memory as `appid.zip` containing `appid.lua`.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
 - Shows Steam game details in a Discord embed with the game banner, source, AppID, publisher, and release date.
+- Sends game requests and moderation logs as embeds to separate configured channels.
 - Moderator/request storage uses a Cloudflare Durable Object.
-- Full moderation command set with audit logs.
+- Moderation, message moderation, stored automod config, and role-management commands with audit logs.
 
 ## Security
 
@@ -56,7 +57,6 @@ PowerShell:
 
 ```powershell
 $env:DISCORD_TOKEN="your_rotated_discord_token"
-$env:DISCORD_APPLICATION_ID="947389898531430421"
 npm run register
 ```
 
@@ -67,7 +67,14 @@ $env:DISCORD_GUILD_ID="your_guild_id"
 npm run register
 ```
 
-Without `DISCORD_GUILD_ID`, commands are registered globally and can take time to appear.
+When `DISCORD_GUILD_ID` is set, the script registers guild commands and clears global commands by default. This prevents duplicate command display if you previously registered both global and guild commands.
+
+Without `DISCORD_GUILD_ID`, commands are registered globally and can take time to appear. To clear one guild while using global commands:
+
+```powershell
+$env:CLEAR_GUILD_ID="your_guild_id"
+npm run register
+```
 
 ## Deploy
 
@@ -99,9 +106,10 @@ Public:
 
 Moderator:
 
-- `/mod add userid:<id>`
-- `/mod remove userid:<id>`
-- `/mod list`
+- `/admin add userid:<id>`
+- `/admin remove userid:<id>`
+- `/admin list`
+- `/admin manifest appid:<number>`
 - `/requests`
 - `/request-delete appid:<number>`
 - `/announce message:<text>`
@@ -110,17 +118,62 @@ Moderation:
 
 - `/kick user:<member> reason:<optional>`
 - `/ban user:<member> reason:<optional> days:<0-7>`
+- `/tempban user:<member> duration:<minutes> reason:<optional>`
 - `/unban userid:<id>`
+- `/softban user:<member>`
 - `/mute user:<member> duration:<minutes> reason:<optional>`
 - `/unmute user:<member>`
+- `/timeout user:<member> duration:<minutes> reason:<optional>`
+- `/untimeout user:<member>`
 - `/warn user:<member> reason:<required>`
 - `/warnings user:<member>`
 - `/clearwarns user:<member>`
-- `/purge amount:<1-100>`
+- `/note user:<member> note:<text>`
+- `/cases user:<member>`
+- `/modlogs user:<optional>`
+
+Message moderation:
+
+- `/purge recent amount:<1-100>`
+- `/purge user user:<member> amount:<1-100>`
+- `/purge bots amount:<1-100>`
+- `/purge embeds amount:<1-100>`
+- `/purge links amount:<1-100>`
+- `/purge attachments amount:<1-100>`
+- `/clean amount:<optional>`
+- `/nuke confirm:NUCLEAR`
 - `/slowmode seconds:<0-21600>`
 - `/lock`
 - `/unlock`
+- `/sticky set|clear|show`
+
+Automod config:
+
+- `/automod enable|disable|config`
+- `/antispam mode:<enable|disable|status>`
+- `/antilink mode:<enable|disable|status>`
+- `/antiinvite mode:<enable|disable|status>`
+- `/antiscam mode:<enable|disable|status>`
+- `/antiraid mode:<enable|disable|status>`
+- `/antiemoji mode:<enable|disable|status>`
+- `/antimention mode:<enable|disable|status>`
+- `/antibot mode:<enable|disable|status>`
+- `/wordfilter add|remove|list`
+- `/whitelist add|remove|list`
+- `/blacklist add|remove|list`
+
+Role management:
+
+- `/role add|remove|create|delete|edit`
+- `/autorole set|clear|show`
+- `/reactionrole set|remove|list`
+- `/selfrole add|remove`
+- `/temprole user:<member> role:<role> duration:<minutes>`
+- `/roleall role:<role>`
+- `/msg user:<member> message:<text>`
+- `/send msg channel:<channel> message:<text>`
 - `/nick user:<member> nickname:<text>`
 - `/userinfo user:<member>`
 - `/serverinfo`
-- `/modlogs`
+
+Automod, autorole, reaction-role, and sticky settings are stored in the Worker Durable Object. Since this bot intentionally uses Interactions API only and no Gateway, real-time message/member-event enforcement requires Discord-native rules or a Gateway/event source.

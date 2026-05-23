@@ -87,10 +87,13 @@ export async function discordApi(env, path, options = {}) {
   return response.json();
 }
 
-export async function sendChannelMessage(env, channelId, content) {
+export async function sendChannelMessage(env, channelId, content, options = {}) {
   return discordApi(env, `/channels/${channelId}/messages`, {
     method: "POST",
-    body: { content: truncate(content, 1900) }
+    body: {
+      content: truncate(content || "", 1900),
+      embeds: options.embeds || []
+    }
   });
 }
 
@@ -255,7 +258,19 @@ export async function storeAndSendModLog(env, entry) {
 
   const channel = env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL;
   if (channel) {
-    await sendChannelMessage(env, channel, auditMessage(entry.action, entry.moderator, entry.target, entry.reason, entry.time));
+    await sendChannelMessage(env, channel, "", {
+      embeds: [{
+        title: entry.action,
+        color: 0x8b5cf6,
+        fields: [
+          { name: "Moderator", value: `${entry.moderator.username || entry.moderator.id}\n${entry.moderator.id}`, inline: true },
+          { name: "Target", value: String(entry.target), inline: true },
+          { name: "Reason", value: truncate(entry.reason || "Not provided", 1000), inline: false },
+          { name: "Time", value: entry.time, inline: false }
+        ],
+        footer: { text: "Charon Mod Logs" }
+      }]
+    });
   }
 }
 

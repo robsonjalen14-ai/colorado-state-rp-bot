@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildGameGenGenerateUrl } from "../src/github.js";
 import { createLuaZip, crc32 } from "../src/zip.js";
 
 test("crc32 matches known value", () => {
@@ -14,4 +15,15 @@ test("createLuaZip creates a valid zip signature", () => {
   assert.equal(zip[3], 0x04);
   const text = new TextDecoder().decode(zip);
   assert.match(text, /480\.lua/);
+});
+
+test("buildGameGenGenerateUrl appends AppID when URL ends at generate", () => {
+  assert.equal(
+    buildGameGenGenerateUrl("https://gamegen.lol/api/key/generate/", "730"),
+    "https://gamegen.lol/api/key/generate/730"
+  );
+  assert.equal(
+    buildGameGenGenerateUrl("https://gamegen.lol/api/key/generate/{APP_ID}", "730"),
+    "https://gamegen.lol/api/key/generate/730"
+  );
 });
