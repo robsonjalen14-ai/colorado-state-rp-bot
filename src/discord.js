@@ -104,6 +104,7 @@ export async function editOriginalInteraction(env, interaction, content, file = 
     const payload = {
       content: truncate(content || "", file ? 1800 : 1900),
       embeds: options.embeds || [],
+      components: options.components || [],
       attachments: file ? [{ id: 0, filename: file.filename }] : []
     };
 

@@ -141,6 +141,18 @@ function gameEmbed(game, source = null) {
   return result;
 }
 
+function downloadButton(url) {
+  return [{
+    type: 1,
+    components: [{
+      type: 2,
+      style: 5,
+      label: "Download ZIP",
+      url
+    }]
+  }];
+}
+
 async function sendResult(env, interaction, result) {
   if (typeof result === "string") {
     await editOriginalInteraction(env, interaction, result);
@@ -237,6 +249,18 @@ async function handleGenCommand(env, interaction) {
   if (!result) {
     await editOriginalInteraction(env, interaction, `No files found for AppID ${appId}`, null, {
       embeds: [gameEmbed(game)]
+    });
+    return;
+  }
+
+  if (result.downloadUrl && !result.bytes) {
+    await editOriginalInteraction(env, interaction, [
+      `Generated for AppID ${appId}`,
+      "External API found the file, but GameGen blocks Cloudflare from attaching it directly.",
+      "Use the Download ZIP button below."
+    ].join("\n"), null, {
+      embeds: [gameEmbed(game, result.source)],
+      components: downloadButton(result.downloadUrl)
     });
     return;
   }

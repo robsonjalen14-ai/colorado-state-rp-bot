@@ -61,3 +61,34 @@ test("lookupPackage falls back to external API zip when Charon repo misses", asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test("lookupPackage returns external download link when Worker is blocked by GameGen", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.includes("gamegen.lol")) {
+      return new Response(JSON.stringify({ error: "VPN_BLOCKED", redirect: "/vpn-blocked" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: ",manifests",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "2215200");
+
+    assert.equal(result.source, "Used External API");
+    assert.equal(result.kind, "api-link");
+    assert.equal(result.fileName, "2215200.zip");
+    assert.equal(result.downloadUrl, "https://gamegen.lol/api/key/generate/2215200?format=zip");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

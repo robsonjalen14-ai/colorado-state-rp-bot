@@ -17,6 +17,7 @@ No Discord Gateway, no websocket connection, and no external database.
 - Shows Steam game details in a Discord embed with the game banner, source, AppID, publisher, and release date.
 - Sends game requests and moderation logs as embeds to separate configured channels.
 - Sends DM notices for moderation/admin actions such as warn, kick, ban, timeout, role changes, nickname changes, and admin add/remove when Discord allows the DM.
+- If GameGen blocks Cloudflare Worker downloads, `/gen` still shows `Used External API` with a direct Download ZIP button instead of saying no files were found.
 - Moderator/request storage uses a Cloudflare Durable Object.
 - Moderation, message moderation, stored automod config, and role-management commands with audit logs.
 

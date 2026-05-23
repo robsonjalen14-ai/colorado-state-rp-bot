@@ -126,7 +126,7 @@ async function resolveExternalApi(env, appId) {
       data?.download_url;
     if (downloadUrl) {
       const bytes = await downloadBytes(absoluteFromUrl(url, downloadUrl), 30000);
-      if (!isZipBytes(bytes)) return null;
+      if (!isZipBytes(bytes)) return externalLinkResult(env, appId, "GameGen returned a non-ZIP response to the Worker.");
       return {
         source: "Used External API",
         kind: "api",
@@ -135,30 +135,74 @@ async function resolveExternalApi(env, appId) {
       };
     }
   } catch {
-    return null;
+    return externalLinkResult(env, appId, "GameGen blocked Cloudflare Worker file download.");
   }
 
-  return null;
+  return externalLinkResult(env, appId);
 }
 
 async function downloadExternalZip(url, appId) {
   const zipResponse = await fetchWithTimeout(url, {
     timeout: 30000,
-    headers: { Accept: "application/zip" }
+    headers: {
+      Accept: "application/zip, application/octet-stream, */*",
+      "Cache-Control": "no-cache",
+      "User-Agent": "CharonBot/1.0"
+    },
+    cf: { cacheTtl: 0 }
   });
-  if (!zipResponse.ok) return null;
   const bytes = new Uint8Array(await zipResponse.arrayBuffer());
-  if (!isZipBytes(bytes)) return null;
-  return {
-    source: "Used External API",
-    kind: "api",
-    fileName: `${appId}.zip`,
-    bytes
-  };
+  if (zipResponse.ok && isZipBytes(bytes)) {
+    return {
+      source: "Used External API",
+      kind: "api",
+      fileName: `${appId}.zip`,
+      bytes
+    };
+  }
+  if (isVpnBlocked(bytes)) {
+    return {
+      source: "Used External API",
+      kind: "api-link",
+      fileName: `${appId}.zip`,
+      downloadUrl: url,
+      blockedReason: "GameGen blocked Cloudflare Worker file download."
+    };
+  }
+  return null;
 }
 
 export function isZipBytes(bytes) {
   return bytes?.[0] === 0x50 && bytes?.[1] === 0x4b && bytes?.[2] === 0x03 && bytes?.[3] === 0x04;
+}
+
+function isVpnBlocked(bytes) {
+  try {
+    return new TextDecoder().decode(bytes).includes("VPN_BLOCKED");
+  } catch {
+    return false;
+  }
+}
+
+export function externalDownloadUrl(env, appId) {
+  const directUrl = env.GAMEGEN_API_URL
+    ? buildGameGenGenerateUrl(env.GAMEGEN_API_URL, appId)
+    : env.GAMEGEN_API_KEY
+      ? `${(env.GAMEGEN_API_BASE || "https://gamegen.lol/api").replace(/\/$/, "")}/${env.GAMEGEN_API_KEY}/generate/${appId}`
+      : "";
+  return directUrl ? withQuery(directUrl, "format", "zip") : "";
+}
+
+function externalLinkResult(env, appId, reason = "External API file is available as a direct download.") {
+  const downloadUrl = externalDownloadUrl(env, appId);
+  if (!downloadUrl) return null;
+  return {
+    source: "Used External API",
+    kind: "api-link",
+    fileName: `${appId}.zip`,
+    downloadUrl,
+    blockedReason: reason
+  };
 }
 
 export function buildGameGenGenerateUrl(baseUrl, appId) {
