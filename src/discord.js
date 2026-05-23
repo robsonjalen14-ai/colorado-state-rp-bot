@@ -109,6 +109,12 @@ export async function sendChannelMessage(env, channelId, content, options = {}) 
   });
 }
 
+export async function addReaction(env, channelId, messageId, emoji) {
+  return discordApi(env, `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`, {
+    method: "PUT"
+  });
+}
+
 export async function editOriginalInteraction(env, interaction, content, file = null, options = {}) {
   const url = `${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
 

@@ -92,6 +92,25 @@ export const COMMANDS = [
     options: [appIdOption]
   },
   {
+    name: "help",
+    description: "Show Charon bot command help"
+  },
+  {
+    name: "botstatus",
+    description: "Show Charon bot health and source order"
+  },
+  {
+    name: "poll",
+    description: "Create a simple reaction poll",
+    options: [
+      textOption("question", "Poll question", true, 300),
+      textOption("option1", "First option", true, 100),
+      textOption("option2", "Second option", true, 100),
+      textOption("option3", "Third option", false, 100),
+      textOption("option4", "Fourth option", false, 100)
+    ]
+  },
+  {
     name: "admin",
     description: "Charon bot administration",
     options: [

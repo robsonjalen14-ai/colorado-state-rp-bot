@@ -105,6 +105,8 @@ Public:
 
 - `/request appid:<number>`
 - `/gen appid:<number>`
+- `/help`
+- `/botstatus`
 
 Moderator:
 
@@ -174,6 +176,7 @@ Role management:
 - `/roleall role:<role>`
 - `/msg user:<member> message:<text>`
 - `/send msg channel:<channel> message:<text>`
+- `/poll question:<text> option1:<text> option2:<text> option3:<optional> option4:<optional>`
 - `/nick user:<member> nickname:<text>`
 - `/userinfo user:<member>`
 - `/serverinfo`

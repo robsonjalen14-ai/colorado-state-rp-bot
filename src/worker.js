@@ -1,4 +1,5 @@
 import {
+  addReaction,
   assertCanModerateTarget,
   assertCommandPermission,
   auditMessage,
@@ -163,6 +164,35 @@ function downloadButton(url) {
   }];
 }
 
+function helpEmbed() {
+  return embed("Charon Help", [
+    {
+      name: "Manifest Tools",
+      value: "`/gen appid` - Generate/download ZIP\n`/request appid` - Request a game\n`/admin manifest appid` - Check source availability",
+      inline: false
+    },
+    {
+      name: "Moderation",
+      value: "`/warn`, `/kick`, `/ban`, `/mute`, `/timeout`, `/purge`, `/lock`, `/slowmode`, `/cases`, `/modlogs`",
+      inline: false
+    },
+    {
+      name: "Community",
+      value: "`/poll` - Create a reaction poll\n`/botstatus` - Check bot/source health\n`/role`, `/autorole`, `/selfrole`, `/send msg`, `/msg`",
+      inline: false
+    }
+  ], MOD);
+}
+
+function botStatusEmbed() {
+  return embed("Charon Bot Status", [
+    { name: "Runtime", value: "Cloudflare Workers", inline: true },
+    { name: "Source Order", value: "Database 1 -> Database 2 -> GameGen API", inline: false },
+    { name: "GameGen Handling", value: "Attaches ZIP when allowed. Shows Download ZIP button if GameGen blocks Worker downloads.", inline: false },
+    { name: "Storage", value: "Durable Object", inline: true }
+  ], SUCCESS);
+}
+
 async function sendResult(env, interaction, result) {
   if (typeof result === "string") {
     await editOriginalInteraction(env, interaction, "", null, {
@@ -250,6 +280,30 @@ async function handleRequestCommand(env, interaction) {
       { name: "Timestamp", value: timestamp, inline: false }
     ], SUCCESS)]
   });
+}
+
+async function handlePoll(env, interaction) {
+  requireGuild(interaction);
+  const question = String(getOptionValue(interaction.data.options, "question", "")).trim();
+  const options = ["option1", "option2", "option3", "option4"]
+    .map((name) => String(getOptionValue(interaction.data.options, name, "")).trim())
+    .filter(Boolean);
+  if (!question || options.length < 2) throw new Error("Poll needs a question and at least two options.");
+
+  const emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"];
+  const message = await sendChannelMessage(env, interaction.channel_id, "", {
+    embeds: [embed("Community Poll", [
+      { name: "Question", value: truncate(question, 1000), inline: false },
+      { name: "Options", value: options.map((option, index) => `${emojis[index]} ${option}`).join("\n"), inline: false },
+      { name: "Created By", value: `<@${interactionUser(interaction).id}>`, inline: false }
+    ], MOD)]
+  });
+
+  for (let index = 0; index < options.length; index += 1) {
+    await addReaction(env, interaction.channel_id, message.id, emojis[index]).catch(() => null);
+  }
+
+  return "Poll created.";
 }
 
 async function handleGenCommand(env, interaction) {
@@ -950,6 +1004,9 @@ async function handleServerInfo(env, interaction) {
 
 async function runCommand(env, interaction) {
   switch (interaction.data.name) {
+    case "help": return { embeds: [helpEmbed()] };
+    case "botstatus": return { embeds: [botStatusEmbed()] };
+    case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
     case "requests": return handleRequestsCommand(env, interaction);
     case "request-delete": return handleRequestDeleteCommand(env, interaction);
@@ -1059,6 +1116,11 @@ export async function handleInteraction(request, env, ctx) {
       }).catch(console.error)
     ));
     return deferredResponse(false);
+  }
+
+  if (interaction.data.name === "help" || interaction.data.name === "botstatus") {
+    ctx.waitUntil(completeDeferredCommand(env, interaction));
+    return deferredResponse(true);
   }
 
   if (!(await canUseModeratorCommands(env, interaction))) {
