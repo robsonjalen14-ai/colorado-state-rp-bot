@@ -176,6 +176,31 @@ function userLabel(target) {
   return `${target.user?.username || target.userId} (${target.userId})`;
 }
 
+async function dmUser(env, userId, title, fields = [], color = MOD) {
+  try {
+    const dm = await discordApi(env, "/users/@me/channels", {
+      method: "POST",
+      body: { recipient_id: userId }
+    });
+    await sendChannelMessage(env, dm.id, "", {
+      embeds: [embed(title, fields, color)]
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function notifyUserAction(env, interaction, target, action, reason = "Not provided", fields = []) {
+  const userId = typeof target === "string" ? target : target.userId;
+  await dmUser(env, userId, `Charon Notice: ${action}`, [
+    { name: "Server", value: interaction.guild_id || "Unknown", inline: false },
+    { name: "Action", value: action, inline: true },
+    { name: "Reason", value: truncate(reason || "Not provided", 1000), inline: false },
+    ...fields
+  ], MOD);
+}
+
 async function handleRequestCommand(env, interaction) {
   const appId = normalizeAppId(getOptionValue(interaction.data.options, "appid"));
   const user = interactionUser(interaction);
@@ -236,12 +261,14 @@ async function handleAdminCommand(env, interaction) {
       moderators.push(userId);
       await putStored(env, "moderators", moderators);
     }
+    await notifyUserAction(env, interaction, userId, "Admin Access Granted", "You were added as a Charon bot admin.");
     return "Moderator added.";
   }
 
   if (action === "remove") {
     const userId = normalizeUserId(commandOption(interaction, "userid"));
     await putStored(env, "moderators", moderators.filter((id) => id !== userId));
+    await notifyUserAction(env, interaction, userId, "Admin Access Removed", "You were removed from Charon bot admins.");
     return "Moderator removed.";
   }
 
@@ -317,6 +344,9 @@ async function banTarget(env, interaction, options = {}) {
   const reason = commandOption(interaction, "reason", "Not provided");
   const days = Number(commandOption(interaction, "days", options.days ?? 0));
   await assertCanModerateTarget(env, interaction, target);
+  await notifyUserAction(env, interaction, target, options.tempMinutes ? "Temporary Ban" : options.soft ? "Softban" : "Ban", reason, options.tempMinutes
+    ? [{ name: "Duration", value: `${options.tempMinutes} minute(s)`, inline: true }]
+    : []);
 
   await discordApi(env, `/guilds/${interaction.guild_id}/bans/${target.userId}?reason=${encodeURIComponent(reason)}`, {
     method: "PUT",
@@ -357,6 +387,7 @@ async function handleUnban(env, interaction) {
   const userId = normalizeUserId(getOptionValue(interaction.data.options, "userid"));
   const reason = getOptionValue(interaction.data.options, "reason", "Unbanned");
   await discordApi(env, `/guilds/${interaction.guild_id}/bans/${userId}?reason=${encodeURIComponent(reason)}`, { method: "DELETE" });
+  await notifyUserAction(env, interaction, userId, "Unban", reason);
   await logAction(env, interaction, "UNBAN", userId, reason);
   return "User unbanned.";
 }
@@ -367,6 +398,7 @@ async function handleKick(env, interaction) {
   const target = targetUser(interaction);
   const reason = commandOption(interaction, "reason", "Not provided");
   await assertCanModerateTarget(env, interaction, target);
+  await notifyUserAction(env, interaction, target, "Kick", reason);
   await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}?reason=${encodeURIComponent(reason)}`, { method: "DELETE" });
   await logAction(env, interaction, "KICK", userLabel(target), reason);
   return "User kicked.";
@@ -379,6 +411,9 @@ async function handleMute(env, interaction) {
   const duration = Number(commandOption(interaction, "duration"));
   const reason = commandOption(interaction, "reason", "Not provided");
   await assertCanModerateTarget(env, interaction, target);
+  await notifyUserAction(env, interaction, target, "Timeout", reason, [
+    { name: "Duration", value: `${duration} minute(s)`, inline: true }
+  ]);
 
   const until = new Date(Date.now() + duration * 60000).toISOString();
   await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}?reason=${encodeURIComponent(reason)}`, {
@@ -398,6 +433,7 @@ async function handleUnmute(env, interaction) {
   assertCommandPermission(interaction, PERMISSIONS.MODERATE_MEMBERS);
   const target = targetUser(interaction);
   await assertCanModerateTarget(env, interaction, target);
+  await notifyUserAction(env, interaction, target, "Timeout Removed", "Your timeout was removed.");
   await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}`, {
     method: "PATCH",
     body: { communication_disabled_until: null }
@@ -424,6 +460,7 @@ async function handleWarn(env, interaction) {
   const target = targetUser(interaction);
   const reason = String(commandOption(interaction, "reason", "")).trim();
   await assertCanModerateTarget(env, interaction, target);
+  await notifyUserAction(env, interaction, target, "Warning", reason);
   const warnings = await warningsData(env);
   warnings[target.userId] ||= [];
   warnings[target.userId].unshift({ reason, moderatorId: interactionUser(interaction).id, time: utcNow() });
@@ -450,6 +487,7 @@ async function handleClearWarns(env, interaction) {
   const warnings = await warningsData(env);
   delete warnings[target.userId];
   await putStored(env, "warnings", warnings);
+  await notifyUserAction(env, interaction, target, "Warnings Cleared", "Your Charon warnings were cleared.");
   await logAction(env, interaction, "CLEAR WARNS", userLabel(target), "Warnings cleared");
   return "Warnings cleared.";
 }
@@ -681,6 +719,7 @@ async function handleRole(env, interaction) {
     await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}/roles/${id}`, {
       method: action === "add" ? "PUT" : "DELETE"
     });
+    await notifyUserAction(env, interaction, target, action === "add" ? "Role Added" : "Role Removed", `<@&${id}>`);
     await logAction(env, interaction, `ROLE ${action.toUpperCase()}`, userLabel(target), `<@&${id}>`);
     return action === "add" ? "Role added." : "Role removed.";
   }
@@ -773,6 +812,10 @@ async function handleTempRole(env, interaction) {
   const reason = commandOption(interaction, "reason", "Temporary role");
   await assertCanModerateTarget(env, interaction, target);
   await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}/roles/${id}`, { method: "PUT" });
+  await notifyUserAction(env, interaction, target, "Temporary Role Added", reason, [
+    { name: "Role", value: `<@&${id}>`, inline: true },
+    { name: "Duration", value: `${duration} minute(s)`, inline: true }
+  ]);
   const temproles = await getStored(env, "temproles", []);
   temproles.push({
     guildId: interaction.guild_id,
@@ -836,6 +879,7 @@ async function handleNick(env, interaction) {
     method: "PATCH",
     body: { nick: nickname }
   });
+  await notifyUserAction(env, interaction, target, "Nickname Updated", nickname);
   await logAction(env, interaction, "NICK", userLabel(target), nickname);
   return "Nickname updated.";
 }
@@ -975,7 +1019,7 @@ export async function handleInteraction(request, env, ctx) {
   }
 
   ctx.waitUntil(completeDeferredCommand(env, interaction));
-  return deferredResponse(true);
+  return deferredResponse(false);
 }
 
 export default {

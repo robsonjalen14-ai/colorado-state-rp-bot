@@ -113,6 +113,9 @@ async function resolveExternalApi(env, appId) {
   const url = directUrl || keyedUrl;
   if (!url) return null;
 
+  const directZip = await downloadExternalZip(withQuery(url, "format", "zip"), appId);
+  if (directZip) return directZip;
+
   try {
     const data = await fetchJsonAny(url, 15000);
     if (data?.success === false) return null;
@@ -122,29 +125,40 @@ async function resolveExternalApi(env, appId) {
       data?.downloadUrl ||
       data?.download_url;
     if (downloadUrl) {
+      const bytes = await downloadBytes(absoluteFromUrl(url, downloadUrl), 30000);
+      if (!isZipBytes(bytes)) return null;
       return {
         source: "Used External API",
         kind: "api",
         fileName: `${appId}.zip`,
-        bytes: await downloadBytes(absoluteFromUrl(url, downloadUrl), 30000)
+        bytes
       };
     }
   } catch {
-    // Fall through to the direct ZIP endpoint. GameGen may keep ZIP output healthy
-    // while the JSON generate response is temporarily unavailable.
+    return null;
   }
 
-  const zipResponse = await fetchWithTimeout(withQuery(url, "format", "zip"), {
+  return null;
+}
+
+async function downloadExternalZip(url, appId) {
+  const zipResponse = await fetchWithTimeout(url, {
     timeout: 30000,
     headers: { Accept: "application/zip" }
   });
   if (!zipResponse.ok) return null;
+  const bytes = new Uint8Array(await zipResponse.arrayBuffer());
+  if (!isZipBytes(bytes)) return null;
   return {
     source: "Used External API",
     kind: "api",
     fileName: `${appId}.zip`,
-    bytes: new Uint8Array(await zipResponse.arrayBuffer())
+    bytes
   };
+}
+
+export function isZipBytes(bytes) {
+  return bytes?.[0] === 0x50 && bytes?.[1] === 0x4b && bytes?.[2] === 0x03 && bytes?.[3] === 0x04;
 }
 
 export function buildGameGenGenerateUrl(baseUrl, appId) {

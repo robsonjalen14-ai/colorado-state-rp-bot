@@ -16,6 +16,7 @@ No Discord Gateway, no websocket connection, and no external database.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
 - Shows Steam game details in a Discord embed with the game banner, source, AppID, publisher, and release date.
 - Sends game requests and moderation logs as embeds to separate configured channels.
+- Sends DM notices for moderation/admin actions such as warn, kick, ban, timeout, role changes, nickname changes, and admin add/remove when Discord allows the DM.
 - Moderator/request storage uses a Cloudflare Durable Object.
 - Moderation, message moderation, stored automod config, and role-management commands with audit logs.
 
