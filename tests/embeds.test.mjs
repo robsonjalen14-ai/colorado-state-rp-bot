@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { COMMANDS } from "../src/commands.js";
+import {
+  createManifestEmbed,
+  createNoResultsEmbed,
+  createWebsiteEmbed,
+  websiteButton
+} from "../src/embeds.js";
+
+test("createManifestEmbed returns one premium result card with image and badges", () => {
+  const embed = createManifestEmbed({
+    game: {
+      appId: "3542380",
+      name: "Example Game",
+      publishers: ["Example Publisher"],
+      releaseDate: "May 19, 2026",
+      banner: "https://cdn.cloudflare.steamstatic.com/steam/apps/3542380/header.jpg"
+    },
+    source: "Used External API",
+    elapsedMs: 1234,
+    accentColor: 0x123456
+  });
+
+  assert.equal(embed.title, "✅ Manifest Ready");
+  assert.equal(embed.color, 0x123456);
+  assert.equal(embed.image.url.includes("3542380"), true);
+  assert.match(embed.description, /Example Game/);
+  assert.match(embed.description, /AppID 3542380/);
+  assert.match(embed.description, /External API/);
+  assert.equal(embed.fields.length, 1);
+  assert.match(embed.fields[0].value, /Download ready/);
+});
+
+test("createNoResultsEmbed provides a calm request flow without fake download data", () => {
+  const embed = createNoResultsEmbed("2215200");
+
+  assert.equal(embed.title, "🔍 Nothing Available Yet");
+  assert.match(embed.description, /No downloadable package/);
+  assert.match(embed.description, /\/request appid:2215200/);
+  assert.equal(embed.url, undefined);
+  assert.equal(embed.image, undefined);
+});
+
+test("createWebsiteEmbed and website button point at the public website", () => {
+  const embed = createWebsiteEmbed();
+  const components = websiteButton();
+
+  assert.equal(embed.url, "https://charon.vyro.workers.dev/");
+  assert.match(embed.description, /official Charon hub/i);
+  assert.equal(components[0].components[0].url, "https://charon.vyro.workers.dev/");
+});
+
+test("command registry includes website exactly once", () => {
+  const names = COMMANDS.map((command) => command.name);
+  assert.equal(names.filter((name) => name === "website").length, 1);
+});

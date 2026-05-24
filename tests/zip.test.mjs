@@ -92,3 +92,31 @@ test("lookupPackage returns external download link when Worker is blocked by Gam
     globalThis.fetch = originalFetch;
   }
 });
+
+test("lookupPackage returns null when repo and external API return no package", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    if (value.includes("gamegen.lol")) {
+      return new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: ",manifests",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "999999999");
+
+    assert.equal(result, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

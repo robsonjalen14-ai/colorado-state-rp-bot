@@ -135,10 +135,10 @@ async function resolveExternalApi(env, appId) {
       };
     }
   } catch {
-    return externalLinkResult(env, appId, "GameGen blocked Cloudflare Worker file download.");
+    return null;
   }
 
-  return externalLinkResult(env, appId);
+  return null;
 }
 
 async function downloadExternalZip(url, appId) {

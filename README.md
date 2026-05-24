@@ -14,7 +14,9 @@ No Discord Gateway, no websocket connection, and no external database.
 - Direct `appid.zip` is returned as-is.
 - Direct `appid.lua` is zipped in memory as `appid.zip` containing `appid.lua`.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
-- Shows Steam game details in a Discord embed with the game banner, source, AppID, publisher, and release date.
+- Shows Steam game details in a single premium Discord embed with the game banner, source, AppID, publisher, release date, and a dynamic artwork-based accent color.
+- Shows a polished no-results embed with the `/request` follow-up when no package is available.
+- `/website` opens the official Charon website.
 - Sends game requests and moderation logs as embeds to separate configured channels.
 - Sends DM notices for moderation/admin actions such as warn, kick, ban, timeout, role changes, nickname changes, and admin add/remove when Discord allows the DM.
 - If GameGen blocks Cloudflare Worker downloads, `/gen` still shows `Used External API` with a direct Download ZIP button instead of saying no files were found.
@@ -105,6 +107,7 @@ Public:
 
 - `/request appid:<number>`
 - `/gen appid:<number>`
+- `/website`
 - `/help`
 - `/botstatus`
 

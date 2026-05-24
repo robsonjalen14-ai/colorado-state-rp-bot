@@ -92,6 +92,10 @@ export const COMMANDS = [
     options: [appIdOption]
   },
   {
+    name: "website",
+    description: "Open the official Charon website"
+  },
+  {
     name: "help",
     description: "Show Charon bot command help"
   },

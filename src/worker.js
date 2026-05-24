@@ -18,6 +18,13 @@ import {
   storeAndSendModLog,
   verifyDiscordRequest
 } from "./discord.js";
+import {
+  createManifestEmbed,
+  createNoResultsEmbed,
+  createWebsiteEmbed,
+  extractImageAccentColor,
+  websiteButton
+} from "./embeds.js";
 import { fetchGameDetails, lookupPackage } from "./github.js";
 import {
   PERMISSIONS,
@@ -38,7 +45,6 @@ const INTERACTION_TYPE = {
 };
 
 const SUCCESS = 0x05fff7;
-const WARN = 0xf59e0b;
 const DANGER = 0xef4444;
 const MOD = 0x8b5cf6;
 
@@ -168,7 +174,7 @@ function helpEmbed() {
   return embed("Charon Help", [
     {
       name: "Manifest Tools",
-      value: "`/gen appid` - Generate/download ZIP\n`/request appid` - Request a game\n`/admin manifest appid` - Check source availability",
+      value: "`/gen appid` - Generate/download ZIP\n`/request appid` - Request a game\n`/website` - Open the Charon website\n`/admin manifest appid` - Check source availability",
       inline: false
     },
     {
@@ -307,6 +313,7 @@ async function handlePoll(env, interaction) {
 }
 
 async function handleGenCommand(env, interaction) {
+  const startedAt = Date.now();
   const appId = normalizeAppId(getOptionValue(interaction.data.options, "appid"));
   await editOriginalInteraction(env, interaction, "", null, {
     embeds: [messageEmbed("Generating", `Preparing manifest package for AppID **${appId}**...`, MOD)]
@@ -319,17 +326,22 @@ async function handleGenCommand(env, interaction) {
 
   if (!result) {
     await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [
-        messageEmbed("No Files Found", `No manifest package was found for AppID **${appId}**.`, WARN),
-        gameEmbed(game)
-      ]
+      embeds: [createNoResultsEmbed(appId)]
     });
     return;
   }
 
+  const accentColor = await extractImageAccentColor(game.banner, `${appId}:${result.source}`);
+  const manifestEmbed = createManifestEmbed({
+    game,
+    source: result.source,
+    elapsedMs: Date.now() - startedAt,
+    accentColor
+  });
+
   if (result.downloadUrl && !result.bytes) {
     await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [gameEmbed(game, result.source)],
+      embeds: [manifestEmbed],
       components: downloadButton(result.downloadUrl)
     });
     return;
@@ -340,10 +352,7 @@ async function handleGenCommand(env, interaction) {
     bytes: result.bytes,
     contentType: "application/zip"
   }, {
-    embeds: [
-      messageEmbed("Generated", `Manifest package generated for AppID **${appId}**.`, SUCCESS),
-      gameEmbed(game, result.source)
-    ]
+    embeds: [manifestEmbed]
   });
 }
 
@@ -1006,6 +1015,7 @@ async function runCommand(env, interaction) {
   switch (interaction.data.name) {
     case "help": return { embeds: [helpEmbed()] };
     case "botstatus": return { embeds: [botStatusEmbed()] };
+    case "website": return { embeds: [createWebsiteEmbed()], components: websiteButton() };
     case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
     case "requests": return handleRequestsCommand(env, interaction);
@@ -1118,9 +1128,9 @@ export async function handleInteraction(request, env, ctx) {
     return deferredResponse(false);
   }
 
-  if (interaction.data.name === "help" || interaction.data.name === "botstatus") {
+  if (interaction.data.name === "help" || interaction.data.name === "botstatus" || interaction.data.name === "website") {
     ctx.waitUntil(completeDeferredCommand(env, interaction));
-    return deferredResponse(true);
+    return deferredResponse(interaction.data.name !== "website");
   }
 
   if (!(await canUseModeratorCommands(env, interaction))) {
