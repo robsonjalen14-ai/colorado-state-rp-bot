@@ -17,6 +17,9 @@ No Discord Gateway, no websocket connection, and no external database.
 - Shows Steam game details in a single premium Discord embed with the game banner, source, AppID, publisher, release date, and a dynamic artwork-based accent color.
 - Shows a polished no-results embed with the `/request` follow-up when no package is available.
 - `/website` opens the official Charon website.
+- Tickety-style support tickets with `/setticket`, category selection, modal descriptions, private channels, claim/close/reopen/delete buttons, user picker add, transcripts, and ticket logs.
+- Ticket staff permissions use stored bot admins from `/admin add`; no Discord staff role is required.
+- Utility commands for pings, publishing, embeds, welcome config, self-role panels, mail, suggestions, reports, appeals, backups, and server/message tools.
 - Sends game requests and moderation logs as embeds to separate configured channels.
 - Sends DM notices for moderation/admin actions such as warn, kick, ban, timeout, role changes, nickname changes, and admin add/remove when Discord allows the DM.
 - If GameGen blocks Cloudflare Worker downloads, `/gen` still shows `Used External API` with a direct Download ZIP button instead of saying no files were found.
@@ -50,6 +53,8 @@ Paste your Discord bot token when prompted.
 - `DISCORD_APPLICATION_ID`
 - `REQUEST_CHANNEL`
 - `MOD_LOG_CHANNEL`
+- `TICKET_LOG_CHANNEL`
+- `TICKET_CATEGORY_ID`
 - database URLs
 - GameGen API URL
 
@@ -110,16 +115,45 @@ Public:
 - `/website`
 - `/help`
 - `/botstatus`
+- `/ping`
+- `/status`
+- `/avatar`
+- `/banner`
+- `/channelinfo`
+- `/serverinfo`
+- `/vote`
+- `/feedback`
+- `/suggest`
+- `/bug`
+- `/report`
+- `/appeal`
 
 Moderator:
 
 - `/admin add userid:<id>`
 - `/admin remove userid:<id>`
 - `/admin list`
+- `/admin transfer userid:<id>`
+- `/admin permissions`
+- `/admin logs`
 - `/admin manifest appid:<number>`
+- `/setticket`
+- `/ticket panel|claim|unclaim|close|reopen|rename|priority|move|transfer|transcript|notes|delete`
 - `/requests`
 - `/request-delete appid:<number>`
 - `/announce message:<text>`
+- `/publish`
+- `/embed`
+- `/welcome setup|preview|disable`
+- `/mail send|inbox|delete`
+- `/selfroles panel|list`
+- `/backup create|restore|list`
+- `/logs`
+- `/history`
+- `/search user|ticket`
+- `/settings`
+- `/config`
+- `/reset`
 
 Moderation:
 

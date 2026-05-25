@@ -138,6 +138,7 @@ export function permissionBits(interaction) {
 
 export const PERMISSIONS = {
   ADMINISTRATOR: 0x8n,
+  VIEW_CHANNEL: 0x400n,
   MANAGE_GUILD: 0x20n,
   MANAGE_ROLES: 0x10000000n,
   MANAGE_CHANNELS: 0x10n,
@@ -145,7 +146,9 @@ export const PERMISSIONS = {
   KICK_MEMBERS: 0x2n,
   BAN_MEMBERS: 0x4n,
   MODERATE_MEMBERS: 0x10000000000n,
-  SEND_MESSAGES: 0x800n
+  SEND_MESSAGES: 0x800n,
+  ATTACH_FILES: 0x8000n,
+  READ_MESSAGE_HISTORY: 0x10000n
 };
 
 export function hasPermission(interaction, bit) {

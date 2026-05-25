@@ -27,6 +27,16 @@ import {
 } from "./embeds.js";
 import { fetchGameDetails, lookupPackage } from "./github.js";
 import {
+  TICKET_COMMANDS,
+  createQuickTicket,
+  handleSetTicketCommand,
+  handleTicketCommand,
+  handleTicketComponent,
+  handleTicketModal,
+  isTicketComponent,
+  isTicketModal
+} from "./tickets.js";
+import {
   PERMISSIONS,
   getOptionValue,
   getSubcommand,
@@ -41,7 +51,9 @@ import {
 
 const INTERACTION_TYPE = {
   PING: 1,
-  APPLICATION_COMMAND: 2
+  APPLICATION_COMMAND: 2,
+  MESSAGE_COMPONENT: 3,
+  MODAL_SUBMIT: 5
 };
 
 const SUCCESS = 0x05fff7;
@@ -184,18 +196,31 @@ function helpEmbed() {
     },
     {
       name: "Community",
-      value: "`/poll` - Create a reaction poll\n`/botstatus` - Check bot/source health\n`/role`, `/autorole`, `/selfrole`, `/send msg`, `/msg`",
+      value: "`/setticket` - Create ticket panel\n`/ticket` - Manage tickets\n`/poll`, `/vote`, `/suggest`, `/feedback`, `/report`, `/appeal`, `/bug`\n`/botstatus`, `/ping`, `/status` - Check bot health",
       inline: false
     }
   ], MOD);
 }
 
-function botStatusEmbed() {
+async function botStatusEmbed(env) {
+  const tickets = await getStored(env, "tickets", []);
+  const moderators = await getStored(env, "moderators", []);
   return embed("Charon Bot Status", [
     { name: "Runtime", value: "Cloudflare Workers", inline: true },
-    { name: "Source Order", value: "Database 1 -> Database 2 -> GameGen API", inline: false },
-    { name: "GameGen Handling", value: "Attaches ZIP when allowed. Shows Download ZIP button if GameGen blocks Worker downloads.", inline: false },
-    { name: "Storage", value: "Durable Object", inline: true }
+    { name: "Mode", value: "Serverless Interactions", inline: true },
+    { name: "Storage", value: "Durable Object", inline: true },
+    { name: "Tickets", value: `${Array.isArray(tickets) ? tickets.filter((ticket) => ticket.status !== "deleted").length : 0} tracked`, inline: true },
+    { name: "Admins", value: `${Array.isArray(moderators) ? moderators.length : 0} stored`, inline: true },
+    { name: "Health", value: "Online and ready.", inline: false }
+  ], SUCCESS);
+}
+
+function pingEmbed(interaction) {
+  const createdAt = snowflakeMs(interaction.id);
+  const latency = Math.max(0, Date.now() - createdAt);
+  return embed("Pong", [
+    { name: "Latency", value: `${latency} ms`, inline: true },
+    { name: "Runtime", value: "Cloudflare Workers", inline: true }
   ], SUCCESS);
 }
 
@@ -221,6 +246,20 @@ async function getStored(env, key, fallback) {
 
 async function putStored(env, key, value) {
   await storageCall(env, "put", { key, value });
+}
+
+async function storeAdminLog(env, action, actor, target, reason = "Updated") {
+  const logs = await getStored(env, "adminlogs", []);
+  const entry = {
+    action,
+    actor: { id: actor.id, username: actor.username },
+    target,
+    reason,
+    time: utcNow()
+  };
+  logs.unshift(entry);
+  await putStored(env, "adminlogs", logs.slice(0, 100));
+  return entry;
 }
 
 function snowflakeMs(id) {
@@ -367,6 +406,7 @@ async function handleAdminCommand(env, interaction) {
       moderators.push(userId);
       await putStored(env, "moderators", moderators);
     }
+    await storeAdminLog(env, "ADMIN ADD", interactionUser(interaction), userId);
     await notifyUserAction(env, interaction, userId, "Admin Access Granted", "You were added as a Charon bot admin.");
     return "Moderator added.";
   }
@@ -374,6 +414,7 @@ async function handleAdminCommand(env, interaction) {
   if (action === "remove") {
     const userId = normalizeUserId(commandOption(interaction, "userid"));
     await putStored(env, "moderators", moderators.filter((id) => id !== userId));
+    await storeAdminLog(env, "ADMIN REMOVE", interactionUser(interaction), userId);
     await notifyUserAction(env, interaction, userId, "Admin Access Removed", "You were removed from Charon bot admins.");
     return "Moderator removed.";
   }
@@ -382,6 +423,37 @@ async function handleAdminCommand(env, interaction) {
     return moderators.length
       ? `Moderators:\n${moderators.map((id) => `- <@${id}> (${id})`).join("\n")}`
       : "Moderators:\nNone";
+  }
+
+  if (action === "transfer") {
+    const userId = normalizeUserId(commandOption(interaction, "userid"));
+    const nextModerators = [...new Set([...moderators, userId])];
+    await putStored(env, "moderators", nextModerators);
+    await putStored(env, "adminOwner", userId);
+    await storeAdminLog(env, "ADMIN TRANSFER", interactionUser(interaction), userId, "Ownership transferred");
+    await notifyUserAction(env, interaction, userId, "Admin Ownership Transferred", "You were made Charon bot owner/admin.");
+    return "Admin ownership transferred.";
+  }
+
+  if (action === "permissions") {
+    return {
+      embeds: [embed("Admin Permissions", [
+        { name: "Bot Admin Source", value: "`/admin add` stored users", inline: false },
+        { name: "Ticket Staff", value: "Only stored bot admins can claim, add users, reopen, delete, and export ticket transcripts.", inline: false },
+        { name: "Server Managers", value: "Manage Server can run setup/admin commands, but ticket staff access comes from `/admin add`.", inline: false }
+      ], MOD)]
+    };
+  }
+
+  if (action === "logs") {
+    const logs = (await getStored(env, "adminlogs", [])).slice(0, 10);
+    return {
+      embeds: [embed("Admin Logs", logs.length ? logs.map((log) => ({
+        name: `${log.action} - ${log.time}`,
+        value: `Actor: ${log.actor?.username || log.actor?.id}\nTarget: ${log.target}\nReason: ${log.reason}`,
+        inline: false
+      })) : [{ name: "No logs", value: "No admin actions stored yet.", inline: false }], MOD)]
+    };
   }
 
   if (action === "manifest") {
@@ -421,14 +493,60 @@ async function handleRequestDeleteCommand(env, interaction) {
   return "Request removed.";
 }
 
+function sendFormatOptions(interaction) {
+  return {
+    format: String(commandOption(interaction, "format", "normal")),
+    ping: Boolean(commandOption(interaction, "ping", false)),
+    image: String(commandOption(interaction, "image", "")).trim(),
+    title: String(commandOption(interaction, "title", "")).trim()
+  };
+}
+
+async function sendFormattedChannelMessage(env, channel, message, options = {}) {
+  const allowedMentions = options.ping ? { parse: ["users", "roles", "everyone"] } : { parse: [] };
+  if (options.format === "embed") {
+    const messageEmbedPayload = {
+      description: truncate(message, 4000),
+      color: MOD,
+      timestamp: new Date().toISOString(),
+      footer: { text: "Charon Bot" }
+    };
+    if (options.title) messageEmbedPayload.title = truncate(options.title, 200);
+    if (options.image) messageEmbedPayload.image = { url: options.image };
+    await sendChannelMessage(env, channel, "", {
+      embeds: [messageEmbedPayload],
+      allowedMentions
+    });
+    return;
+  }
+  await sendChannelMessage(env, channel, message, {
+    rawContent: true,
+    allowedMentions
+  });
+}
+
 async function handleAnnouncement(env, interaction) {
   await requireModerator(env, interaction);
   const message = String(getOptionValue(interaction.data.options, "message", "")).trim();
   if (!message) throw new Error("Announcement message is required.");
-  await sendChannelMessage(env, env.REQUEST_CHANNEL, "", {
-    embeds: [embed("Announcement", [{ name: "Message", value: truncate(message, 1000), inline: false }], MOD)]
-  });
+  await sendFormattedChannelMessage(env, env.REQUEST_CHANNEL, message, sendFormatOptions(interaction));
   return "Announcement sent.";
+}
+
+async function handlePublish(env, interaction) {
+  await requireModerator(env, interaction);
+  const targetChannel = channelId(interaction);
+  const message = String(commandOption(interaction, "message", "")).trim();
+  await sendFormattedChannelMessage(env, targetChannel, message, sendFormatOptions(interaction));
+  return `Published to <#${targetChannel}>.`;
+}
+
+async function handleEmbedCommand(env, interaction) {
+  await requireModerator(env, interaction);
+  const targetChannel = channelId(interaction);
+  const message = String(commandOption(interaction, "message", "")).trim();
+  await sendFormattedChannelMessage(env, targetChannel, message, { ...sendFormatOptions(interaction), format: "embed" });
+  return `Embed sent to <#${targetChannel}>.`;
 }
 
 async function logAction(env, interaction, action, target, reason) {
@@ -971,7 +1089,7 @@ async function handleSend(env, interaction) {
   await requireModerator(env, interaction);
   const targetChannel = channelId(interaction);
   const message = String(commandOption(interaction, "message", "")).trim();
-  await sendChannelMessage(env, targetChannel, message);
+  await sendFormattedChannelMessage(env, targetChannel, message, sendFormatOptions(interaction));
   return `Message sent to <#${targetChannel}>.`;
 }
 
@@ -1000,7 +1118,6 @@ async function handleUserInfo(env, interaction) {
 }
 
 async function handleServerInfo(env, interaction) {
-  await requireModerator(env, interaction);
   const { guild, channels } = await guildInfo(env, interaction.guild_id);
   return [
     `Server name: ${guild.name}`,
@@ -1011,16 +1128,358 @@ async function handleServerInfo(env, interaction) {
   ].join("\n");
 }
 
+async function handleAvatar(interaction) {
+  const userId = commandOption(interaction, "user", interactionUser(interaction).id);
+  const user = interaction.data.resolved?.users?.[userId] || interactionUser(interaction);
+  const hash = user.avatar;
+  const ext = hash?.startsWith("a_") ? "gif" : "png";
+  const url = hash
+    ? `https://cdn.discordapp.com/avatars/${user.id}/${hash}.${ext}?size=1024`
+    : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id) % 5n)}.png`;
+  return {
+    embeds: [{
+      title: `${user.username}'s Avatar`,
+      color: MOD,
+      image: { url },
+      footer: { text: "Charon Bot" }
+    }]
+  };
+}
+
+async function handleBanner(env, interaction) {
+  const userId = commandOption(interaction, "user", interactionUser(interaction).id);
+  const user = await discordApi(env, `/users/${userId}`);
+  if (!user.banner) return "No banner found for this user.";
+  const ext = user.banner.startsWith("a_") ? "gif" : "png";
+  const url = `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.${ext}?size=1024`;
+  return {
+    embeds: [{
+      title: `${user.username}'s Banner`,
+      color: MOD,
+      image: { url },
+      footer: { text: "Charon Bot" }
+    }]
+  };
+}
+
+async function handleChannelInfo(env, interaction) {
+  const id = commandOption(interaction, "channel", interaction.channel_id);
+  const channel = await discordApi(env, `/channels/${id}`);
+  return {
+    embeds: [embed("Channel Info", [
+      { name: "Name", value: channel.name || id, inline: true },
+      { name: "ID", value: channel.id, inline: true },
+      { name: "Type", value: String(channel.type), inline: true },
+      { name: "Topic", value: channel.topic || "None", inline: false }
+    ], MOD)]
+  };
+}
+
+async function handleInviteInfo(env, interaction) {
+  const raw = String(commandOption(interaction, "code", "")).trim();
+  const code = raw.split("/").filter(Boolean).pop();
+  const invite = await discordApi(env, `/invites/${encodeURIComponent(code)}?with_counts=true`);
+  return {
+    embeds: [embed("Invite Info", [
+      { name: "Code", value: invite.code, inline: true },
+      { name: "Guild", value: invite.guild?.name || "Unknown", inline: true },
+      { name: "Channel", value: invite.channel?.name || "Unknown", inline: true },
+      { name: "Approx Members", value: String(invite.approximate_member_count ?? "Unknown"), inline: true }
+    ], MOD)]
+  };
+}
+
+async function handlePin(env, interaction, pinned) {
+  await requireModerator(env, interaction);
+  assertCommandPermission(interaction, PERMISSIONS.MANAGE_MESSAGES);
+  const messageId = String(commandOption(interaction, "messageid", "")).trim();
+  await discordApi(env, `/channels/${interaction.channel_id}/pins/${messageId}`, { method: pinned ? "PUT" : "DELETE" });
+  return pinned ? "Message pinned." : "Message unpinned.";
+}
+
+async function handleQuote(env, interaction) {
+  const messageId = String(commandOption(interaction, "messageid", "")).trim();
+  const message = await discordApi(env, `/channels/${interaction.channel_id}/messages/${messageId}`);
+  return {
+    embeds: [{
+      title: "Quoted Message",
+      description: truncate(message.content || "No text content.", 4000),
+      color: MOD,
+      fields: [
+        { name: "Author", value: `${message.author?.username || "Unknown"}\n${message.author?.id || ""}`, inline: true },
+        { name: "Sent", value: message.timestamp || "Unknown", inline: true }
+      ],
+      footer: { text: "Charon Bot" },
+      timestamp: new Date().toISOString()
+    }]
+  };
+}
+
+async function handleArchive(env, interaction) {
+  await requireModerator(env, interaction);
+  const amount = Number(getOptionValue(interaction.data.options, "amount", 50));
+  const messages = (await fetchRecentMessages(env, interaction.channel_id, amount)).reverse();
+  const textContent = messages.map((message) =>
+    `[${message.timestamp}] ${message.author?.username || "Unknown"} (${message.author?.id || ""}): ${message.content || ""}`
+  ).join("\n");
+  await sendChannelMessage(env, env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL, "", {
+    embeds: [embed("Channel Archive", [
+      { name: "Channel", value: `<#${interaction.channel_id}>`, inline: true },
+      { name: "Messages", value: String(messages.length), inline: true },
+      { name: "Preview", value: truncate(textContent || "No messages.", 1000), inline: false }
+    ], MOD)]
+  });
+  return "Archive sent to logs.";
+}
+
+async function handleWelcome(env, interaction) {
+  await requireModerator(env, interaction);
+  const action = subcommandName(interaction);
+  const config = await getStored(env, "welcome", {});
+  if (action === "setup") {
+    config.channelId = channelId(interaction);
+    config.message = String(commandOption(interaction, "message", "")).trim();
+    config.updatedAt = utcNow();
+    config.updatedBy = interactionUser(interaction).id;
+    await putStored(env, "welcome", config);
+    return "Welcome config saved.";
+  }
+  if (action === "disable") {
+    await putStored(env, "welcome", {});
+    return "Welcome config disabled.";
+  }
+  return config.channelId
+    ? `Welcome channel: <#${config.channelId}>\nMessage: ${config.message}`
+    : "Welcome config is not set.";
+}
+
+async function handleMail(env, interaction) {
+  const action = subcommandName(interaction);
+  const inboxes = await getStored(env, "mail", {});
+  const user = interactionUser(interaction);
+
+  if (action === "send") {
+    const target = targetUser(interaction);
+    const message = String(commandOption(interaction, "message", "")).trim();
+    const id = Date.now().toString(36);
+    inboxes[target.userId] ||= [];
+    inboxes[target.userId].unshift({ id, from: user.id, message, time: utcNow() });
+    await putStored(env, "mail", inboxes);
+    await notifyUserAction(env, interaction, target, "New Server Mail", message);
+    return "Mail sent.";
+  }
+
+  if (action === "delete") {
+    const id = String(commandOption(interaction, "id", "")).trim();
+    inboxes[user.id] = (inboxes[user.id] || []).filter((item) => item.id !== id);
+    await putStored(env, "mail", inboxes);
+    return "Mail deleted.";
+  }
+
+  const inbox = inboxes[user.id] || [];
+  return {
+    embeds: [embed("Inbox", inbox.length ? inbox.slice(0, 10).map((item) => ({
+      name: `${item.id} - ${item.time}`,
+      value: `From: <@${item.from}>\n${truncate(item.message, 800)}`,
+      inline: false
+    })) : [{ name: "Empty", value: "No mail yet.", inline: false }], MOD)]
+  };
+}
+
+async function handleSelfRoles(env, interaction) {
+  await requireModerator(env, interaction);
+  const action = subcommandName(interaction);
+  const config = await getStored(env, "selfroles", []);
+  if (action === "panel") {
+    const id = roleId(interaction);
+    const label = String(commandOption(interaction, "label", "Get Role")).trim();
+    const message = await sendChannelMessage(env, interaction.channel_id, "", {
+      embeds: [embed("Self Roles", [{ name: label, value: `Click below to toggle <@&${id}>.`, inline: false }], MOD)],
+      components: [{
+        type: 1,
+        components: [{
+          type: 2,
+          style: 1,
+          label,
+          custom_id: `selfrole_toggle:${id}`
+        }]
+      }]
+    });
+    config.unshift({ roleId: id, label, channelId: interaction.channel_id, messageId: message.id, createdAt: utcNow() });
+    await putStored(env, "selfroles", config.slice(0, 50));
+    return "Self role panel created.";
+  }
+  return config.length
+    ? `Self roles:\n${config.map((item) => `- <@&${item.roleId}> (${item.label})`).join("\n")}`
+    : "No self roles configured.";
+}
+
+async function handleVote(env, interaction) {
+  const question = String(getOptionValue(interaction.data.options, "question", "")).trim();
+  const message = await sendChannelMessage(env, interaction.channel_id, "", {
+    embeds: [embed("Community Vote", [{ name: "Question", value: truncate(question, 1000), inline: false }], MOD)]
+  });
+  await addReaction(env, interaction.channel_id, message.id, "👍").catch(() => null);
+  await addReaction(env, interaction.channel_id, message.id, "👎").catch(() => null);
+  return "Vote created.";
+}
+
+async function handleGiveaway(env, interaction) {
+  await requireModerator(env, interaction);
+  const action = subcommandName(interaction);
+  const giveaways = await getStored(env, "giveaways", {});
+  if (action === "start") {
+    const prize = String(commandOption(interaction, "prize", "")).trim();
+    const message = await sendChannelMessage(env, interaction.channel_id, "", {
+      embeds: [embed("Giveaway", [
+        { name: "Prize", value: truncate(prize, 1000), inline: false },
+        { name: "How to enter", value: "Click the button below.", inline: false }
+      ], MOD)],
+      components: [{
+        type: 1,
+        components: [{ type: 2, style: 1, label: "Enter Giveaway", custom_id: "giveaway_enter" }]
+      }]
+    });
+    giveaways[message.id] = { prize, channelId: interaction.channel_id, entries: [], createdAt: utcNow() };
+    await putStored(env, "giveaways", giveaways);
+    return "Giveaway started.";
+  }
+  const messageId = String(commandOption(interaction, "messageid", "")).trim();
+  const giveaway = giveaways[messageId];
+  if (!giveaway?.entries?.length) return "No entries found for that giveaway.";
+  const winner = giveaway.entries[Math.floor(Math.random() * giveaway.entries.length)];
+  await sendChannelMessage(env, giveaway.channelId, `Winner: <@${winner}>`, { rawContent: true, allowedMentions: { users: [winner], parse: [] } });
+  return `Winner selected: <@${winner}>`;
+}
+
+async function handleSubmission(env, interaction, type) {
+  const message = String(getOptionValue(interaction.data.options, "message", "")).trim();
+  const user = interactionUser(interaction);
+  if (type === "report" || type === "appeal") {
+    return createQuickTicket(env, interaction, type, message);
+  }
+  const titles = {
+    feedback: "Feedback",
+    suggest: "Suggestion",
+    bug: "Bug Report",
+    report: "User Report",
+    appeal: "Appeal"
+  };
+  await sendChannelMessage(env, env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL, "", {
+    embeds: [embed(titles[type] || "Submission", [
+      { name: "From", value: `<@${user.id}>\n${user.id}`, inline: true },
+      { name: "Message", value: truncate(message, 1000), inline: false }
+    ], MOD)]
+  });
+  return "Submitted.";
+}
+
+async function handleBackup(env, interaction) {
+  await requireModerator(env, interaction);
+  const action = subcommandName(interaction);
+  const backups = await getStored(env, "backups", []);
+  if (action === "create") {
+    const snapshot = {
+      id: Date.now().toString(36),
+      time: utcNow(),
+      by: interactionUser(interaction).id,
+      moderators: await getStored(env, "moderators", []),
+      welcome: await getStored(env, "welcome", {}),
+      automod: await getStored(env, "automod", {}),
+      roleconfig: await getStored(env, "roleconfig", {}),
+      selfroles: await getStored(env, "selfroles", [])
+    };
+    backups.unshift(snapshot);
+    await putStored(env, "backups", backups.slice(0, 20));
+    return `Backup created: ${snapshot.id}`;
+  }
+  if (action === "restore") {
+    const id = String(commandOption(interaction, "id", "")).trim();
+    const backup = backups.find((item) => item.id === id);
+    if (!backup) throw new Error("Backup not found.");
+    await putStored(env, "moderators", backup.moderators || []);
+    await putStored(env, "welcome", backup.welcome || {});
+    await putStored(env, "automod", backup.automod || {});
+    await putStored(env, "roleconfig", backup.roleconfig || {});
+    await putStored(env, "selfroles", backup.selfroles || []);
+    return "Backup restored.";
+  }
+  return backups.length
+    ? `Backups:\n${backups.map((item) => `- ${item.id} - ${item.time}`).join("\n")}`
+    : "No backups yet.";
+}
+
+async function handleSearch(env, interaction) {
+  await requireModerator(env, interaction);
+  const action = subcommandName(interaction);
+  if (action === "ticket") {
+    const id = String(commandOption(interaction, "id", "")).trim().toLowerCase();
+    const tickets = await getStored(env, "tickets", []);
+    const ticket = tickets.find((item) => String(item.id).toLowerCase() === id);
+    return ticket
+      ? `Ticket ${ticket.id}: <#${ticket.channelId}> ${ticket.status} ${ticket.typeLabel}`
+      : "Ticket not found.";
+  }
+  const target = targetUser(interaction);
+  const [warnings, notes, tickets] = await Promise.all([
+    warningsData(env),
+    notesData(env),
+    getStored(env, "tickets", [])
+  ]);
+  return {
+    embeds: [embed("User Search", [
+      { name: "User", value: `<@${target.userId}>\n${target.userId}`, inline: true },
+      { name: "Warnings", value: String((warnings[target.userId] || []).length), inline: true },
+      { name: "Notes", value: String((notes[target.userId] || []).length), inline: true },
+      { name: "Tickets", value: String(tickets.filter((ticket) => ticket.userId === target.userId).length), inline: true }
+    ], MOD)]
+  };
+}
+
+async function handleSettings(env) {
+  const [moderators, welcome, automod, roleconfig, tickets] = await Promise.all([
+    getStored(env, "moderators", []),
+    getStored(env, "welcome", {}),
+    getStored(env, "automod", {}),
+    getStored(env, "roleconfig", {}),
+    getStored(env, "tickets", [])
+  ]);
+  return {
+    embeds: [embed("Settings", [
+      { name: "Admins", value: String(Array.isArray(moderators) ? moderators.length : 0), inline: true },
+      { name: "Welcome", value: welcome.channelId ? `<#${welcome.channelId}>` : "Disabled", inline: true },
+      { name: "Automod", value: automod.enabled ? "Enabled" : "Disabled", inline: true },
+      { name: "Autorole", value: roleconfig.autorole ? `<@&${roleconfig.autorole}>` : "None", inline: true },
+      { name: "Tickets", value: String(Array.isArray(tickets) ? tickets.length : 0), inline: true }
+    ], MOD)]
+  };
+}
+
+async function handleReset(env, interaction) {
+  await requireModerator(env, interaction);
+  const area = String(getOptionValue(interaction.data.options, "area", "")).trim().toLowerCase();
+  const allowed = new Set(["welcome", "automod", "roleconfig", "sticky"]);
+  if (!allowed.has(area)) throw new Error("Area must be one of: welcome, automod, roleconfig, sticky.");
+  await putStored(env, area, area === "sticky" ? {} : {});
+  return `${area} reset.`;
+}
+
 async function runCommand(env, interaction) {
   switch (interaction.data.name) {
     case "help": return { embeds: [helpEmbed()] };
-    case "botstatus": return { embeds: [botStatusEmbed()] };
+    case "botstatus": return { embeds: [await botStatusEmbed(env)] };
+    case "ping": return { embeds: [pingEmbed(interaction)] };
+    case "status": return { embeds: [await botStatusEmbed(env)] };
     case "website": return { embeds: [createWebsiteEmbed()], components: websiteButton() };
     case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
+    case "setticket": return handleSetTicketCommand(env, interaction);
+    case "ticket": return handleTicketCommand(env, interaction);
     case "requests": return handleRequestsCommand(env, interaction);
     case "request-delete": return handleRequestDeleteCommand(env, interaction);
     case "announce": return handleAnnouncement(env, interaction);
+    case "publish": return handlePublish(env, interaction);
+    case "embed": return handleEmbedCommand(env, interaction);
     case "kick": return handleKick(env, interaction);
     case "ban": return banTarget(env, interaction);
     case "tempban": return handleTempBan(env, interaction);
@@ -1059,6 +1518,7 @@ async function runCommand(env, interaction) {
     case "autorole": return handleAutorole(env, interaction);
     case "reactionrole": return handleReactionRole(env, interaction);
     case "selfrole": return handleSelfRole(env, interaction);
+    case "selfroles": return handleSelfRoles(env, interaction);
     case "temprole": return handleTempRole(env, interaction);
     case "roleall": return handleRoleAll(env, interaction);
     case "msg": return handleMsg(env, interaction);
@@ -1066,6 +1526,30 @@ async function runCommand(env, interaction) {
     case "nick": return handleNick(env, interaction);
     case "userinfo": return handleUserInfo(env, interaction);
     case "serverinfo": return handleServerInfo(env, interaction);
+    case "avatar": return handleAvatar(interaction);
+    case "banner": return handleBanner(env, interaction);
+    case "channelinfo": return handleChannelInfo(env, interaction);
+    case "inviteinfo": return handleInviteInfo(env, interaction);
+    case "pin": return handlePin(env, interaction, true);
+    case "unpin": return handlePin(env, interaction, false);
+    case "quote": return handleQuote(env, interaction);
+    case "archive": return handleArchive(env, interaction);
+    case "welcome": return handleWelcome(env, interaction);
+    case "mail": return handleMail(env, interaction);
+    case "vote": return handleVote(env, interaction);
+    case "giveaway": return handleGiveaway(env, interaction);
+    case "feedback": return handleSubmission(env, interaction, "feedback");
+    case "suggest": return handleSubmission(env, interaction, "suggest");
+    case "bug": return handleSubmission(env, interaction, "bug");
+    case "report": return handleSubmission(env, interaction, "report");
+    case "appeal": return handleSubmission(env, interaction, "appeal");
+    case "backup": return handleBackup(env, interaction);
+    case "logs": return handleModLogs(env, interaction);
+    case "history": return handleRequestsCommand(env, interaction);
+    case "search": return handleSearch(env, interaction);
+    case "settings": return handleSettings(env);
+    case "config": return handleSettings(env);
+    case "reset": return handleReset(env, interaction);
     default: throw new Error("Unknown command.");
   }
 }
@@ -1106,12 +1590,68 @@ async function processScheduled(env) {
   await putStored(env, "temproles", remainingRoles);
 }
 
+const PUBLIC_COMMANDS = new Set([
+  "help",
+  "botstatus",
+  "ping",
+  "status",
+  "website",
+  "avatar",
+  "banner",
+  "channelinfo",
+  "inviteinfo",
+  "serverinfo",
+  "quote",
+  "mail",
+  "vote",
+  "feedback",
+  "suggest",
+  "bug",
+  "report",
+  "appeal"
+]);
+
+async function handleSelfRoleComponent(env, interaction) {
+  const role = interaction.data.custom_id.split(":")[1];
+  const user = interactionUser(interaction);
+  const hasRole = (interaction.member?.roles || []).includes(role);
+  await discordApi(env, `/guilds/${interaction.guild_id}/members/${user.id}/roles/${role}`, {
+    method: hasRole ? "DELETE" : "PUT"
+  });
+  return messageResponse(hasRole ? "Role removed." : "Role added.", true);
+}
+
+async function handleGiveawayComponent(env, interaction) {
+  const giveaways = await getStored(env, "giveaways", {});
+  const messageId = interaction.message?.id;
+  const giveaway = giveaways[messageId];
+  if (!giveaway) return messageResponse("Giveaway is no longer active.", true);
+  const user = interactionUser(interaction);
+  giveaway.entries ||= [];
+  if (!giveaway.entries.includes(user.id)) giveaway.entries.push(user.id);
+  giveaways[messageId] = giveaway;
+  await putStored(env, "giveaways", giveaways);
+  return messageResponse("Giveaway entry saved.", true);
+}
+
 export async function handleInteraction(request, env, ctx) {
   const rawBody = await request.text();
   if (!(await verifyDiscordRequest(request, env, rawBody))) return text("Invalid request signature.", 401);
 
   const interaction = JSON.parse(rawBody);
   if (interaction.type === INTERACTION_TYPE.PING) return pong();
+  if (interaction.type === INTERACTION_TYPE.MESSAGE_COMPONENT) {
+    const customId = interaction.data.custom_id || "";
+    if (isTicketComponent(customId)) return handleTicketComponent(env, interaction, ctx);
+    if (customId.startsWith("selfrole_toggle:")) return handleSelfRoleComponent(env, interaction);
+    if (customId === "giveaway_enter") return handleGiveawayComponent(env, interaction);
+    return messageResponse("Unsupported interaction.");
+  }
+  if (interaction.type === INTERACTION_TYPE.MODAL_SUBMIT) {
+    const customId = interaction.data.custom_id || "";
+    if (isTicketModal(customId)) return handleTicketModal(env, interaction, ctx);
+    return messageResponse("Unsupported modal.");
+  }
   if (interaction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) return messageResponse("Unsupported interaction.");
 
   if (interaction.data.name === "request") {
@@ -1128,9 +1668,14 @@ export async function handleInteraction(request, env, ctx) {
     return deferredResponse(false);
   }
 
-  if (interaction.data.name === "help" || interaction.data.name === "botstatus" || interaction.data.name === "website") {
+  if (PUBLIC_COMMANDS.has(interaction.data.name)) {
     ctx.waitUntil(completeDeferredCommand(env, interaction));
-    return deferredResponse(interaction.data.name !== "website");
+    return deferredResponse(!["website", "vote"].includes(interaction.data.name));
+  }
+
+  if (TICKET_COMMANDS.has(interaction.data.name)) {
+    ctx.waitUntil(completeDeferredCommand(env, interaction));
+    return deferredResponse(false);
   }
 
   if (!(await canUseModeratorCommands(env, interaction))) {

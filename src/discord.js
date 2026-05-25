@@ -17,7 +17,10 @@ import {
 export const InteractionResponseType = {
   PONG: 1,
   CHANNEL_MESSAGE_WITH_SOURCE: 4,
-  DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: 5
+  DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: 5,
+  DEFERRED_UPDATE_MESSAGE: 6,
+  UPDATE_MESSAGE: 7,
+  MODAL: 9
 };
 
 export const FLAGS = {
@@ -57,6 +60,7 @@ export function messageResponse(content, ephemeral = true, options = {}) {
     data: {
       content: "",
       embeds: options.embeds || [standardEmbed(content, options.color)],
+      components: options.components || [],
       flags: ephemeral ? FLAGS.EPHEMERAL : undefined
     }
   });
@@ -67,6 +71,32 @@ export function deferredResponse(ephemeral = true) {
     type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
       flags: ephemeral ? FLAGS.EPHEMERAL : undefined
+    }
+  });
+}
+
+export function deferredUpdateResponse() {
+  return json({ type: InteractionResponseType.DEFERRED_UPDATE_MESSAGE });
+}
+
+export function modalResponse(customId, title, components) {
+  return json({
+    type: InteractionResponseType.MODAL,
+    data: {
+      custom_id: customId,
+      title,
+      components
+    }
+  });
+}
+
+export function updateMessageResponse(options = {}) {
+  return json({
+    type: InteractionResponseType.UPDATE_MESSAGE,
+    data: {
+      content: options.rawContent ? truncate(options.content || "", 1900) : "",
+      embeds: options.embeds || [],
+      components: options.components || []
     }
   });
 }
@@ -104,8 +134,28 @@ export async function sendChannelMessage(env, channelId, content, options = {}) 
     method: "POST",
     body: {
       content: options.rawContent ? truncate(content || "", 1900) : "",
-      embeds
+      embeds,
+      components: options.components || [],
+      allowed_mentions: options.allowedMentions || { parse: [] }
     }
+  });
+}
+
+export async function sendChannelFile(env, channelId, content, file, options = {}) {
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({
+    content: options.rawContent ? truncate(content || "", 1800) : "",
+    embeds: options.embeds || [],
+    components: options.components || [],
+    allowed_mentions: options.allowedMentions || { parse: [] },
+    attachments: [{ id: 0, filename: file.filename }]
+  }));
+  form.append("files[0]", new Blob([file.bytes], { type: file.contentType || "application/octet-stream" }), file.filename);
+
+  return discordApi(env, `/channels/${channelId}/messages`, {
+    method: "POST",
+    body: form,
+    timeout: options.timeout ?? 30000
   });
 }
 

@@ -55,3 +55,14 @@ test("command registry includes website exactly once", () => {
   const names = COMMANDS.map((command) => command.name);
   assert.equal(names.filter((name) => name === "website").length, 1);
 });
+
+test("command registry stays within Discord global command limit", () => {
+  const names = COMMANDS.map((command) => command.name);
+  const duplicates = names.filter((name, index) => names.indexOf(name) !== index);
+
+  assert.equal(duplicates.length, 0);
+  assert.equal(COMMANDS.length <= 100, true);
+  for (const required of ["setticket", "ticket", "ping", "publish", "feedback", "appeal"]) {
+    assert.equal(names.includes(required), true);
+  }
+});

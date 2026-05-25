@@ -34,6 +34,13 @@ const roleOption = {
   required: true
 };
 
+const channelOption = {
+  name: "channel",
+  description: "Target channel",
+  type: TYPE.CHANNEL,
+  required: true
+};
+
 const reasonOptional = {
   name: "reason",
   description: "Reason",
@@ -72,6 +79,36 @@ const modeOption = {
   ]
 };
 
+const formatOption = {
+  name: "format",
+  description: "Send as plain text or embed",
+  type: TYPE.STRING,
+  required: true,
+  choices: [
+    { name: "Normal message", value: "normal" },
+    { name: "Embed", value: "embed" }
+  ]
+};
+
+const pingOption = {
+  name: "ping",
+  description: "Allow pings in the sent message",
+  type: TYPE.BOOLEAN,
+  required: false
+};
+
+const priorityOption = {
+  name: "level",
+  description: "Ticket priority",
+  type: TYPE.STRING,
+  required: true,
+  choices: [
+    { name: "Low", value: "low" },
+    { name: "Medium", value: "medium" },
+    { name: "High", value: "high" }
+  ]
+};
+
 function sub(name, description, options = []) {
   return { name, description, type: TYPE.SUB_COMMAND, options };
 }
@@ -101,7 +138,11 @@ export const COMMANDS = [
   },
   {
     name: "botstatus",
-    description: "Show Charon bot health and source order"
+    description: "Show Charon bot health"
+  },
+  {
+    name: "ping",
+    description: "View bot latency"
   },
   {
     name: "poll",
@@ -121,7 +162,32 @@ export const COMMANDS = [
       sub("add", "Add a stored moderator", [textOption("userid", "Discord user ID")]),
       sub("remove", "Remove a stored moderator", [textOption("userid", "Discord user ID")]),
       sub("list", "List stored moderators"),
+      sub("transfer", "Transfer bot admin ownership", [textOption("userid", "Discord user ID")]),
+      sub("permissions", "Show admin permission model"),
+      sub("logs", "Show recent admin actions"),
       sub("manifest", "Check whether an AppID exists in Charon or the external API", [appIdOption])
+    ]
+  },
+  {
+    name: "setticket",
+    description: "Create the premium ticket panel"
+  },
+  {
+    name: "ticket",
+    description: "Manage support tickets",
+    options: [
+      sub("panel", "Create the premium ticket panel"),
+      sub("claim", "Claim the current ticket"),
+      sub("unclaim", "Unclaim the current ticket"),
+      sub("close", "Close the current ticket"),
+      sub("reopen", "Reopen the current ticket"),
+      sub("delete", "Delete the current ticket"),
+      sub("rename", "Rename the current ticket", [textOption("name", "New channel name", true, 90)]),
+      sub("priority", "Set ticket priority", [priorityOption]),
+      sub("move", "Move ticket to another category", [{ name: "category", description: "Target category channel ID", type: TYPE.STRING, required: true }]),
+      sub("transfer", "Transfer ticket ownership", [userOption]),
+      sub("transcript", "Export a ticket transcript"),
+      sub("notes", "Add or view internal ticket notes", [textOption("note", "Internal note text", false, 1000)])
     ]
   },
   {
@@ -136,7 +202,22 @@ export const COMMANDS = [
   {
     name: "announce",
     description: "Send an announcement to the request channel",
-    options: [textOption("message", "Announcement text", true, 1800)]
+    options: [
+      textOption("message", "Announcement text", true, 1800),
+      formatOption,
+      pingOption,
+      textOption("image", "Optional image URL for embeds", false, 500)
+    ]
+  },
+  {
+    name: "publish",
+    description: "Publish a message to a channel",
+    options: [channelOption, textOption("message", "Message", true, 1800), formatOption, pingOption, textOption("image", "Optional image URL for embeds", false, 500)]
+  },
+  {
+    name: "embed",
+    description: "Send a clean custom embed",
+    options: [channelOption, textOption("message", "Embed text", true, 1800), textOption("title", "Optional title", false, 200), pingOption, textOption("image", "Optional image URL", false, 500)]
   },
   {
     name: "kick",
@@ -363,8 +444,10 @@ export const COMMANDS = [
     description: "Send a message through the bot",
     options: [
       sub("msg", "Send a message to a channel", [
-        { name: "channel", description: "Target channel", type: TYPE.CHANNEL, required: true },
-        textOption("message", "Message", true, 1800)
+        channelOption,
+        textOption("message", "Message", true, 1800),
+        formatOption,
+        pingOption
       ])
     ]
   },
@@ -381,6 +464,152 @@ export const COMMANDS = [
   {
     name: "serverinfo",
     description: "Show server information"
+  },
+  {
+    name: "avatar",
+    description: "Show a user avatar",
+    options: [{ ...userOption, required: false }]
+  },
+  {
+    name: "banner",
+    description: "Show a user banner",
+    options: [{ ...userOption, required: false }]
+  },
+  {
+    name: "channelinfo",
+    description: "Show channel information",
+    options: [{ ...channelOption, required: false }]
+  },
+  {
+    name: "inviteinfo",
+    description: "Show invite information",
+    options: [textOption("code", "Invite code or URL", true, 200)]
+  },
+  {
+    name: "pin",
+    description: "Pin a message",
+    options: [textOption("messageid", "Message ID")]
+  },
+  {
+    name: "unpin",
+    description: "Unpin a message",
+    options: [textOption("messageid", "Message ID")]
+  },
+  {
+    name: "quote",
+    description: "Quote a message by ID",
+    options: [textOption("messageid", "Message ID")]
+  },
+  {
+    name: "archive",
+    description: "Export recent channel messages to the log channel",
+    options: [{ ...amountOption, required: false }]
+  },
+  {
+    name: "welcome",
+    description: "Configure welcome messages",
+    options: [
+      sub("setup", "Save welcome settings", [channelOption, textOption("message", "Welcome message", true, 1000)]),
+      sub("preview", "Preview welcome message"),
+      sub("disable", "Disable welcome config")
+    ]
+  },
+  {
+    name: "mail",
+    description: "Send and manage private server mail",
+    options: [
+      sub("send", "Send server mail to a user", [userOption, textOption("message", "Mail message", true, 1500)]),
+      sub("inbox", "View your inbox"),
+      sub("delete", "Delete one inbox item", [textOption("id", "Mail ID")])
+    ]
+  },
+  {
+    name: "selfroles",
+    description: "Manage self role panels",
+    options: [
+      sub("panel", "Create a self role panel", [roleOption, textOption("label", "Button label", false, 80)]),
+      sub("list", "List configured self roles")
+    ]
+  },
+  {
+    name: "vote",
+    description: "Create a yes/no vote",
+    options: [textOption("question", "Vote question", true, 300)]
+  },
+  {
+    name: "giveaway",
+    description: "Manage giveaways",
+    options: [
+      sub("start", "Start a button-entry giveaway", [textOption("prize", "Prize", true, 300)]),
+      sub("reroll", "Reroll a stored giveaway", [textOption("messageid", "Giveaway message ID")])
+    ]
+  },
+  {
+    name: "feedback",
+    description: "Send private feedback to staff",
+    options: [textOption("message", "Feedback", true, 1000)]
+  },
+  {
+    name: "suggest",
+    description: "Send a community suggestion",
+    options: [textOption("message", "Suggestion", true, 1000)]
+  },
+  {
+    name: "bug",
+    description: "Report a bug",
+    options: [textOption("message", "Bug report", true, 1000)]
+  },
+  {
+    name: "report",
+    description: "Create a report ticket",
+    options: [textOption("message", "Report details", true, 1000)]
+  },
+  {
+    name: "appeal",
+    description: "Create an appeal ticket",
+    options: [textOption("message", "Appeal details", true, 1000)]
+  },
+  {
+    name: "backup",
+    description: "Manage bot configuration backups",
+    options: [
+      sub("create", "Create a settings backup"),
+      sub("list", "List backups"),
+      sub("restore", "Restore a backup", [textOption("id", "Backup ID")])
+    ]
+  },
+  {
+    name: "logs",
+    description: "Show recent bot logs"
+  },
+  {
+    name: "history",
+    description: "Show recent ticket history"
+  },
+  {
+    name: "search",
+    description: "Search stored bot records",
+    options: [
+      sub("user", "Search records for a user", [userOption]),
+      sub("ticket", "Search a ticket ID", [textOption("id", "Ticket ID")])
+    ]
+  },
+  {
+    name: "settings",
+    description: "Show bot settings"
+  },
+  {
+    name: "config",
+    description: "Show bot configuration summary"
+  },
+  {
+    name: "reset",
+    description: "Reset a stored config area",
+    options: [textOption("area", "welcome, automod, roleconfig, sticky", true, 50)]
+  },
+  {
+    name: "status",
+    description: "Show public bot status"
   }
 ];
 
