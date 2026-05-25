@@ -1109,9 +1109,9 @@ async function handleNick(env, interaction) {
 }
 
 async function handleUserInfo(env, interaction) {
-  await requireModerator(env, interaction);
   const target = targetUser(interaction);
-  const warnings = await warningsData(env);
+  const canSeePrivate = await canUseModeratorCommands(env, interaction);
+  const warnings = canSeePrivate ? await warningsData(env) : {};
   let member = target.member;
   if (!member) member = await discordApi(env, `/guilds/${interaction.guild_id}/members/${target.userId}`);
   return formatMemberInfo(target.user, member, warnings[target.userId] || []);
@@ -1591,16 +1591,20 @@ async function processScheduled(env) {
 }
 
 const PUBLIC_COMMANDS = new Set([
+  "request",
+  "gen",
   "help",
   "botstatus",
   "ping",
   "status",
   "website",
+  "poll",
   "avatar",
   "banner",
   "channelinfo",
   "inviteinfo",
   "serverinfo",
+  "userinfo",
   "quote",
   "mail",
   "vote",

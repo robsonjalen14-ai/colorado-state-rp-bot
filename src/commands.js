@@ -117,7 +117,7 @@ function textOption(name, description, required = true, maxLength = 1000) {
   return { name, description, type: TYPE.STRING, required, max_length: maxLength };
 }
 
-export const COMMANDS = [
+const RAW_COMMANDS = [
   {
     name: "request",
     description: "Submit a Charon AppID request",
@@ -612,6 +612,11 @@ export const COMMANDS = [
     description: "Show public bot status"
   }
 ];
+
+export const COMMANDS = RAW_COMMANDS.map((command) => ({
+  default_member_permissions: null,
+  ...command
+}));
 
 async function putCommands(token, applicationId, route, commands) {
   const response = await fetch(`${DISCORD_API}${route}`, {

@@ -129,7 +129,7 @@ export async function discordApi(env, path, options = {}) {
 }
 
 export async function sendChannelMessage(env, channelId, content, options = {}) {
-  const embeds = options.embeds || (content ? [standardEmbed(content, options.color)] : []);
+  const embeds = options.embeds || (options.rawContent ? [] : content ? [standardEmbed(content, options.color)] : []);
   return discordApi(env, `/channels/${channelId}/messages`, {
     method: "POST",
     body: {
@@ -169,9 +169,10 @@ export async function editOriginalInteraction(env, interaction, content, file = 
   const url = `${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
 
   async function upload() {
+    const embeds = options.embeds || (options.rawContent ? [] : content ? [standardEmbed(content, options.color)] : []);
     const payload = {
       content: options.rawContent ? truncate(content || "", file ? 1800 : 1900) : "",
-      embeds: options.embeds || (content ? [standardEmbed(content, options.color)] : []),
+      embeds,
       components: options.components || [],
       attachments: file ? [{ id: 0, filename: file.filename }] : []
     };

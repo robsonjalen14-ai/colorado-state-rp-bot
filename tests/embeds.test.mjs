@@ -66,3 +66,9 @@ test("command registry stays within Discord global command limit", () => {
     assert.equal(names.includes(required), true);
   }
 });
+
+test("commands are registered open by default so runtime code controls permissions", () => {
+  for (const command of COMMANDS) {
+    assert.equal(command.default_member_permissions, null, command.name);
+  }
+});
