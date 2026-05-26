@@ -20,6 +20,14 @@ const appIdOption = {
   min_value: 1
 };
 
+const genAppIdOption = {
+  name: "appid",
+  description: "Steam App ID or game name",
+  type: TYPE.STRING,
+  required: true,
+  autocomplete: true
+};
+
 const userOption = {
   name: "user",
   description: "Target user",
@@ -126,6 +134,11 @@ const RAW_COMMANDS = [
   {
     name: "gen",
     description: "Generate a Charon ZIP for a Steam App ID",
+    options: [genAppIdOption]
+  },
+  {
+    name: "fix",
+    description: "Request a manifest repair/replacement",
     options: [appIdOption]
   },
   {
@@ -518,7 +531,26 @@ const RAW_COMMANDS = [
     name: "mail",
     description: "Send and manage private server mail",
     options: [
-      sub("send", "Send server mail to a user", [userOption, textOption("message", "Mail message", true, 1500)]),
+      sub("send", "Send server mail to a user", [
+        userOption,
+        textOption("subject", "Mail subject", true, 200),
+        textOption("message", "Mail message", true, 1500),
+        { name: "appid", description: "Optional Steam App ID for buttons", type: TYPE.INTEGER, required: false, min_value: 1 },
+        { name: "website", description: "Show Website button", type: TYPE.BOOLEAN, required: false },
+        { name: "generate", description: "Show Generate hint button", type: TYPE.BOOLEAN, required: false },
+        { name: "fix", description: "Show Fix hint button", type: TYPE.BOOLEAN, required: false },
+        { name: "close", description: "Show Close button", type: TYPE.BOOLEAN, required: false }
+      ]),
+      sub("channel", "Send formatted mail to a channel", [
+        channelOption,
+        textOption("subject", "Mail subject", true, 200),
+        textOption("message", "Mail message", true, 1500),
+        { name: "appid", description: "Optional Steam App ID for buttons", type: TYPE.INTEGER, required: false, min_value: 1 },
+        { name: "website", description: "Show Website button", type: TYPE.BOOLEAN, required: false },
+        { name: "generate", description: "Show Generate hint button", type: TYPE.BOOLEAN, required: false },
+        { name: "fix", description: "Show Fix hint button", type: TYPE.BOOLEAN, required: false },
+        { name: "close", description: "Show Close button", type: TYPE.BOOLEAN, required: false }
+      ]),
       sub("inbox", "View your inbox"),
       sub("delete", "Delete one inbox item", [textOption("id", "Mail ID")])
     ]
@@ -584,7 +616,31 @@ const RAW_COMMANDS = [
   },
   {
     name: "history",
-    description: "Show recent ticket history"
+    description: "View upload and repair history for an App ID",
+    options: [appIdOption]
+  },
+  {
+    name: "claim",
+    description: "Claim a manifest request or repair job",
+    options: [textOption("id", "Request or fix ID")]
+  },
+  {
+    name: "unclaim",
+    description: "Release a manifest request or repair claim",
+    options: [textOption("id", "Request or fix ID")]
+  },
+  {
+    name: "queue",
+    description: "View pending manifest requests and fixes"
+  },
+  {
+    name: "cancel",
+    description: "Cancel your pending request or fix",
+    options: [appIdOption]
+  },
+  {
+    name: "stats",
+    description: "View Charon request and manifest statistics"
   },
   {
     name: "search",
@@ -609,7 +665,8 @@ const RAW_COMMANDS = [
   },
   {
     name: "status",
-    description: "Show public bot status"
+    description: "View live status for a request or fix",
+    options: [appIdOption]
   }
 ];
 

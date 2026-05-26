@@ -62,7 +62,7 @@ test("command registry stays within Discord global command limit", () => {
 
   assert.equal(duplicates.length, 0);
   assert.equal(COMMANDS.length <= 100, true);
-  for (const required of ["setticket", "ticket", "ping", "publish", "feedback", "appeal"]) {
+  for (const required of ["setticket", "ticket", "ping", "publish", "feedback", "appeal", "fix", "queue", "stats"]) {
     assert.equal(names.includes(required), true);
   }
 });
@@ -71,4 +71,12 @@ test("commands are registered open by default so runtime code controls permissio
   for (const command of COMMANDS) {
     assert.equal(command.default_member_permissions, null, command.name);
   }
+});
+
+test("gen appid option supports Steam name autocomplete while keeping numeric values", () => {
+  const gen = COMMANDS.find((command) => command.name === "gen");
+  const appid = gen.options.find((option) => option.name === "appid");
+
+  assert.equal(appid.type, 3);
+  assert.equal(appid.autocomplete, true);
 });

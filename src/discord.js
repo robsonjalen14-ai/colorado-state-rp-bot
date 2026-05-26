@@ -20,6 +20,7 @@ export const InteractionResponseType = {
   DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: 5,
   DEFERRED_UPDATE_MESSAGE: 6,
   UPDATE_MESSAGE: 7,
+  APPLICATION_COMMAND_AUTOCOMPLETE_RESULT: 8,
   MODAL: 9
 };
 
@@ -97,6 +98,18 @@ export function updateMessageResponse(options = {}) {
       content: options.rawContent ? truncate(options.content || "", 1900) : "",
       embeds: options.embeds || [],
       components: options.components || []
+    }
+  });
+}
+
+export function autocompleteResponse(choices = []) {
+  return json({
+    type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+    data: {
+      choices: choices.slice(0, 25).map((choice) => ({
+        name: truncate(choice.name, 100),
+        value: String(choice.value).slice(0, 100)
+      }))
     }
   });
 }

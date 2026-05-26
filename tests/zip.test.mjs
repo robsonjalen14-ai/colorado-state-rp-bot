@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGameGenGenerateUrl, isZipBytes, lookupPackage } from "../src/github.js";
+import { buildGameGenGenerateUrl, isZipBytes, lookupPackage, lookupRepositoryPackage } from "../src/github.js";
 import { createLuaZip, crc32 } from "../src/zip.js";
 
 test("crc32 matches known value", () => {
@@ -57,6 +57,33 @@ test("lookupPackage falls back to external API zip when Charon repo misses", asy
     assert.equal(result.fileName, "2215200.zip");
     assert.equal(isZipBytes(result.bytes), true);
     assert.equal(seen.some((entry) => entry.url.endsWith("/2215200?format=zip")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lookupRepositoryPackage can check Charon repo without downloading bytes", async () => {
+  const originalFetch = globalThis.fetch;
+  const seen = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    seen.push({ url: String(url), method: options.method || "GET" });
+    if ((options.method || "GET") === "HEAD" && String(url).endsWith("/480.zip")) {
+      return new Response("", { status: 200 });
+    }
+    throw new Error("Unexpected download");
+  };
+
+  try {
+    const result = await lookupRepositoryPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: ""
+    }, "480", { includeBytes: false });
+
+    assert.equal(result.kind, "zip");
+    assert.equal(result.bytes, undefined);
+    assert.equal(seen.some((entry) => entry.method === "GET"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

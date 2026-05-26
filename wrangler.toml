@@ -13,6 +13,9 @@ DATABASE_1_URL = "https://raw.githubusercontent.com/BlissBlender/Charon-Database
 DATABASE_2_URL = "https://raw.githubusercontent.com/BlissBlender/Charon-Database/main/database-2/"
 DATABASE_BASE_PATHS = ",manifests"
 GAMEGEN_API_URL = "https://gamegen.lol/api/mg_cca51ec305a5494a946454fcc21cf1c3/generate/"
+GITHUB_OWNER = "BlissBlender"
+GITHUB_REPO = "Charon-Database"
+GITHUB_BRANCH = "main"
 
 [[durable_objects.bindings]]
 name = "BOT_STORAGE"

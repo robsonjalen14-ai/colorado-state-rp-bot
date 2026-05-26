@@ -19,6 +19,10 @@ No Discord Gateway, no websocket connection, and no external database.
 - `/website` opens the official Charon website.
 - Tickety-style support tickets with `/setticket`, category selection, modal descriptions, private channels, claim/close/reopen/delete buttons, user picker add, transcripts, and ticket logs.
 - Ticket staff permissions use stored bot admins from `/admin add`; no Discord staff role is required.
+- `/gen appid` supports Steam game-name autocomplete while preserving numeric AppID generation.
+- `/request` checks Charon repositories before creating a request, then supports upload publishing to both database folders.
+- `/fix` creates repair jobs that replace existing AppID ZIP/LUA variants in both database folders.
+- Request/fix workflow supports queue, claim, unclaim, cancel, status, history, stats, polished upload logs, and game-added announcements.
 - Utility commands for pings, publishing, embeds, welcome config, self-role panels, mail, suggestions, reports, appeals, backups, and server/message tools.
 - Sends game requests and moderation logs as embeds to separate configured channels.
 - Sends DM notices for moderation/admin actions such as warn, kick, ban, timeout, role changes, nickname changes, and admin add/remove when Discord allows the DM.
@@ -43,9 +47,11 @@ npm install
 ```bash
 wrangler login
 wrangler secret put DISCORD_TOKEN
+wrangler secret put GITHUB_TOKEN
 ```
 
 Paste your Discord bot token when prompted.
+Paste a GitHub token with `repo` access for `GITHUB_TOKEN`; it is required for `/request` and `/fix` publishing.
 
 `wrangler.toml` already contains non-secret config:
 
@@ -57,6 +63,7 @@ Paste your Discord bot token when prompted.
 - `TICKET_CATEGORY_ID`
 - database URLs
 - GameGen API URL
+- GitHub owner/repo/branch for Charon Database
 
 ## Register slash commands
 
@@ -112,11 +119,15 @@ Public:
 
 - `/request appid:<number>`
 - `/gen appid:<number>`
+- `/fix appid:<number>`
 - `/website`
 - `/help`
 - `/botstatus`
 - `/ping`
 - `/status`
+- `/history appid:<number>`
+- `/cancel appid:<number>`
+- `/stats`
 - `/avatar`
 - `/banner`
 - `/channelinfo`
@@ -141,11 +152,15 @@ Moderator:
 - `/ticket panel|claim|unclaim|close|reopen|rename|priority|move|transfer|transcript|notes|delete`
 - `/requests`
 - `/request-delete appid:<number>`
+- `/claim id:<request_or_fix_id>`
+- `/unclaim id:<request_or_fix_id>`
+- `/queue`
 - `/announce message:<text>`
 - `/publish`
 - `/embed`
 - `/welcome setup|preview|disable`
 - `/mail send|inbox|delete`
+- `/mail channel`
 - `/selfroles panel|list`
 - `/backup create|restore|list`
 - `/logs`

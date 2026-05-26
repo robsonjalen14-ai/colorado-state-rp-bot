@@ -2,8 +2,9 @@ import { createLuaZip } from "./zip.js";
 import { fetchJson, fetchWithTimeout, getConfiguredBasePaths, joinUrl } from "./utils.js";
 
 const STORE_DETAILS_URL = "https://store.steampowered.com/api/appdetails?appids=";
-const STORE_DETAILS_FILTERS = "basic,release_date,publishers";
+const STORE_DETAILS_FILTERS = "basic,release_date,publishers,developers,genres";
 const STEAMSPY_DETAILS_URL = "https://steamspy.com/api.php?request=appdetails&appid=";
+const STEAM_SUGGEST_URL = "https://store.steampowered.com/search/suggest";
 
 const PROXIES = [
   (url) => url,
@@ -141,6 +142,47 @@ async function resolveExternalApi(env, appId) {
   return null;
 }
 
+export async function lookupRepositoryPackage(env, appId, options = {}) {
+  const includeBytes = options.includeBytes !== false;
+  for (const candidate of candidatePaths(env, appId, `${appId}.zip`)) {
+    if (await headExists(candidate.url)) {
+      return {
+        source: "Used Charon Repo",
+        kind: "zip",
+        fileName: candidate.fileName,
+        bytes: includeBytes ? await downloadBytes(candidate.url) : undefined,
+        url: candidate.url
+      };
+    }
+  }
+
+  for (const candidate of candidatePaths(env, appId, `${appId}.lua`)) {
+    if (await headExists(candidate.url)) {
+      const luaBytes = includeBytes ? await downloadBytes(candidate.url) : null;
+      return {
+        source: "Used Charon Repo",
+        kind: "lua",
+        fileName: `${appId}.zip`,
+        bytes: includeBytes ? createLuaZip(appId, luaBytes) : undefined,
+        url: candidate.url
+      };
+    }
+  }
+
+  const indexed = await findIndexedZip(env, appId);
+  if (indexed) {
+    return {
+      source: "Used Charon Repo",
+      kind: "indexed-zip",
+      fileName: indexed.fileName.endsWith(".zip") ? indexed.fileName : `${appId}.zip`,
+      bytes: includeBytes ? await downloadBytes(indexed.url) : undefined,
+      url: indexed.url
+    };
+  }
+
+  return null;
+}
+
 async function downloadExternalZip(url, appId) {
   const zipResponse = await fetchWithTimeout(url, {
     timeout: 30000,
@@ -225,42 +267,8 @@ function withQuery(url, key, value) {
 }
 
 export async function lookupPackage(env, appId) {
-  for (const candidate of candidatePaths(env, appId, `${appId}.zip`)) {
-    if (await headExists(candidate.url)) {
-      return {
-        source: "Used Charon Repo",
-        kind: "zip",
-        fileName: candidate.fileName,
-        bytes: await downloadBytes(candidate.url),
-        url: candidate.url
-      };
-    }
-  }
-
-  for (const candidate of candidatePaths(env, appId, `${appId}.lua`)) {
-    if (await headExists(candidate.url)) {
-      const luaBytes = await downloadBytes(candidate.url);
-      return {
-        source: "Used Charon Repo",
-        kind: "lua",
-        fileName: `${appId}.zip`,
-        bytes: createLuaZip(appId, luaBytes),
-        url: candidate.url
-      };
-    }
-  }
-
-  const indexed = await findIndexedZip(env, appId);
-  if (indexed) {
-    return {
-      source: "Used Charon Repo",
-      kind: "indexed-zip",
-      fileName: indexed.fileName.endsWith(".zip") ? indexed.fileName : `${appId}.zip`,
-      bytes: await downloadBytes(indexed.url),
-      url: indexed.url
-    };
-  }
-
+  const repositoryResult = await lookupRepositoryPackage(env, appId);
+  if (repositoryResult) return repositoryResult;
   return resolveExternalApi(env, appId);
 }
 
@@ -279,10 +287,22 @@ function normalizeGameDetails(appId, game) {
   const release = game.release_date && typeof game.release_date === "object"
     ? game.release_date.date
     : game.release_date || game.releaseDate || "Unknown";
+  const developers = Array.isArray(game.developers)
+    ? game.developers.filter(Boolean)
+    : game.developer
+      ? String(game.developer).split(",").map((item) => item.trim()).filter(Boolean)
+      : [];
+  const genres = Array.isArray(game.genres)
+    ? game.genres.map((genre) => genre?.description || genre).filter(Boolean)
+    : game.genre
+      ? String(game.genre).split(",").map((item) => item.trim()).filter(Boolean)
+      : [];
   return {
     appId,
     name,
     publishers,
+    developers,
+    genres,
     releaseDate: release || "Unknown",
     banner: game.header_image || steamAsset(appId, "header.jpg")
   };
@@ -300,6 +320,8 @@ export async function fetchGameDetails(appId) {
     normalizeGameDetails(appId, {
       name: data.name,
       publishers: data.publisher ? [data.publisher] : [],
+      developers: data.developer ? [data.developer] : [],
+      genre: data.genre || "",
       release_date: { date: data.release_date || "Unknown" },
       header_image: steamAsset(appId, "header.jpg")
     })
@@ -318,6 +340,8 @@ export async function fetchGameDetails(appId) {
     appId,
     name: `Steam App ${appId}`,
     publishers: [],
+    developers: [],
+    genres: [],
     releaseDate: "Unknown",
     banner: steamAsset(appId, "header.jpg")
   };
@@ -339,4 +363,56 @@ export function formatGameDetails(game) {
     `Publisher: ${game.publishers.length ? game.publishers.join(", ") : "Unknown"}`,
     `Release: ${game.releaseDate}`
   ].join("\n");
+}
+
+function decodeHtml(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, "\"")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function parseSteamSuggestHtml(html) {
+  const choices = [];
+  const seen = new Set();
+  const blocks = String(html || "").match(/<a\b[\s\S]*?<\/a>/gi) || [];
+
+  for (const block of blocks) {
+    const appMatch = block.match(/\/app\/(\d+)(?:\/|["?])/i);
+    if (!appMatch) continue;
+    const appId = appMatch[1];
+    if (seen.has(appId)) continue;
+    const nameMatch =
+      block.match(/class=["'][^"']*match_name[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i) ||
+      block.match(/data-ds-appid=["']\d+["'][\s\S]*?>([\s\S]*?)<\/a>/i);
+    const rawName = nameMatch ? nameMatch[1].replace(/<[^>]+>/g, " ") : "";
+    const name = decodeHtml(rawName);
+    if (!name) continue;
+    seen.add(appId);
+    choices.push({
+      name: `${name} (${appId})`.slice(0, 100),
+      value: appId
+    });
+    if (choices.length >= 25) break;
+  }
+
+  return choices;
+}
+
+export async function searchSteamSuggestions(term) {
+  const query = String(term || "").trim();
+  if (!query || /^\d+$/.test(query)) return [];
+  const url = `${STEAM_SUGGEST_URL}?term=${encodeURIComponent(query)}&f=games&cc=US&l=english`;
+  const response = await fetchWithTimeout(url, {
+    timeout: 8000,
+    headers: { Accept: "text/html, */*" }
+  });
+  if (!response.ok) return [];
+  return parseSteamSuggestHtml(await response.text());
 }

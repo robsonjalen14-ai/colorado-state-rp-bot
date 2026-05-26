@@ -1,5 +1,6 @@
 import {
   addReaction,
+  autocompleteResponse,
   assertCanModerateTarget,
   assertCommandPermission,
   auditMessage,
@@ -25,7 +26,24 @@ import {
   extractImageAccentColor,
   websiteButton
 } from "./embeds.js";
-import { fetchGameDetails, lookupPackage } from "./github.js";
+import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
+import {
+  MANIFEST_JOB_COMMANDS,
+  createMailEmbed,
+  handleCancelCommand,
+  handleClaimCommand,
+  handleFixCommand,
+  handleManifestHistoryCommand,
+  handleManifestJobComponent,
+  handleManifestJobModal,
+  handleManifestRequestCommand,
+  handleManifestStatusCommand,
+  handleQueueCommand,
+  handleStatsCommand,
+  isManifestJobComponent,
+  isManifestJobModal,
+  mailComponents
+} from "./manifestJobs.js";
 import {
   TICKET_COMMANDS,
   createQuickTicket,
@@ -52,6 +70,7 @@ import {
 const INTERACTION_TYPE = {
   PING: 1,
   APPLICATION_COMMAND: 2,
+  APPLICATION_COMMAND_AUTOCOMPLETE: 4,
   MESSAGE_COMPONENT: 3,
   MODAL_SUBMIT: 5
 };
@@ -81,6 +100,23 @@ export class BotStorage {
       case "delete": {
         await this.state.storage.delete(key);
         return Response.json({ ok: true });
+      }
+      case "manifestJobStartUpload": {
+        const jobs = await this.state.storage.get("manifestJobs") || [];
+        const index = jobs.findIndex((job) => String(job.id) === String(body.jobId));
+        if (index === -1) return Response.json({ ok: false, reason: "NOT_FOUND" });
+        const job = jobs[index];
+        if (job.status === "COMPLETED" || job.uploaded) return Response.json({ ok: false, reason: "COMPLETED", job });
+        if (job.status === "UPLOADING") return Response.json({ ok: false, reason: "UPLOADING", job });
+        jobs[index] = {
+          ...job,
+          status: "UPLOADING",
+          uploadStartedBy: body.userId,
+          uploadStartedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await this.state.storage.put("manifestJobs", jobs);
+        return Response.json({ ok: true, job: jobs[index] });
       }
       default:
         return Response.json({ error: "Unknown storage op." }, { status: 400 });
@@ -276,6 +312,10 @@ function parseHexColor(value) {
 
 function userLabel(target) {
   return `${target.user?.username || target.userId} (${target.userId})`;
+}
+
+function userMention(id) {
+  return `<@${id}>`;
 }
 
 async function dmUser(env, userId, title, fields = [], color = MOD) {
@@ -1258,14 +1298,45 @@ async function handleMail(env, interaction) {
   const inboxes = await getStored(env, "mail", {});
   const user = interactionUser(interaction);
 
-  if (action === "send") {
-    const target = targetUser(interaction);
+  if (action === "send" || action === "channel") {
+    const subject = String(commandOption(interaction, "subject", "Charon Mail")).trim();
     const message = String(commandOption(interaction, "message", "")).trim();
+    const appId = String(commandOption(interaction, "appid", "") || "");
+    const components = mailComponents({
+      appId,
+      website: Boolean(commandOption(interaction, "website", false)),
+      generate: Boolean(commandOption(interaction, "generate", false)),
+      fix: Boolean(commandOption(interaction, "fix", false)),
+      close: Boolean(commandOption(interaction, "close", false))
+    });
+    const mailEmbed = createMailEmbed({
+      subject,
+      message,
+      sender: userMention(user.id)
+    });
+
+    if (action === "channel") {
+      const targetChannel = channelId(interaction);
+      await sendChannelMessage(env, targetChannel, "", {
+        embeds: [mailEmbed],
+        components
+      });
+      return `Mail sent to <#${targetChannel}>.`;
+    }
+
+    const target = targetUser(interaction);
     const id = Date.now().toString(36);
     inboxes[target.userId] ||= [];
-    inboxes[target.userId].unshift({ id, from: user.id, message, time: utcNow() });
+    inboxes[target.userId].unshift({ id, from: user.id, subject, message, time: utcNow() });
     await putStored(env, "mail", inboxes);
-    await notifyUserAction(env, interaction, target, "New Server Mail", message);
+    const dm = await discordApi(env, "/users/@me/channels", {
+      method: "POST",
+      body: { recipient_id: target.userId }
+    });
+    await sendChannelMessage(env, dm.id, "", {
+      embeds: [mailEmbed],
+      components
+    });
     return "Mail sent.";
   }
 
@@ -1280,7 +1351,7 @@ async function handleMail(env, interaction) {
   return {
     embeds: [embed("Inbox", inbox.length ? inbox.slice(0, 10).map((item) => ({
       name: `${item.id} - ${item.time}`,
-      value: `From: <@${item.from}>\n${truncate(item.message, 800)}`,
+      value: `From: <@${item.from}>\nSubject: ${item.subject || "Charon Mail"}\n${truncate(item.message, 800)}`,
       inline: false
     })) : [{ name: "Empty", value: "No mail yet.", inline: false }], MOD)]
   };
@@ -1469,10 +1540,16 @@ async function runCommand(env, interaction) {
     case "help": return { embeds: [helpEmbed()] };
     case "botstatus": return { embeds: [await botStatusEmbed(env)] };
     case "ping": return { embeds: [pingEmbed(interaction)] };
-    case "status": return { embeds: [await botStatusEmbed(env)] };
+    case "status": return handleManifestStatusCommand(env, interaction);
     case "website": return { embeds: [createWebsiteEmbed()], components: websiteButton() };
     case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
+    case "fix": return handleFixCommand(env, interaction);
+    case "claim": return handleClaimCommand(env, interaction, false);
+    case "unclaim": return handleClaimCommand(env, interaction, true);
+    case "queue": return handleQueueCommand(env, interaction);
+    case "cancel": return handleCancelCommand(env, interaction);
+    case "stats": return handleStatsCommand(env, interaction);
     case "setticket": return handleSetTicketCommand(env, interaction);
     case "ticket": return handleTicketCommand(env, interaction);
     case "requests": return handleRequestsCommand(env, interaction);
@@ -1545,7 +1622,7 @@ async function runCommand(env, interaction) {
     case "appeal": return handleSubmission(env, interaction, "appeal");
     case "backup": return handleBackup(env, interaction);
     case "logs": return handleModLogs(env, interaction);
-    case "history": return handleRequestsCommand(env, interaction);
+    case "history": return handleManifestHistoryCommand(env, interaction);
     case "search": return handleSearch(env, interaction);
     case "settings": return handleSettings(env);
     case "config": return handleSettings(env);
@@ -1597,6 +1674,8 @@ const PUBLIC_COMMANDS = new Set([
   "botstatus",
   "ping",
   "status",
+  "history",
+  "stats",
   "website",
   "poll",
   "avatar",
@@ -1614,6 +1693,12 @@ const PUBLIC_COMMANDS = new Set([
   "report",
   "appeal"
 ]);
+
+function focusedAutocompleteValue(interaction) {
+  const option = (interaction.data.options || []).find((item) => item.focused) ||
+    (interaction.data.options || []).flatMap((item) => item.options || []).find((item) => item.focused);
+  return option?.value ?? "";
+}
 
 async function handleSelfRoleComponent(env, interaction) {
   const role = interaction.data.custom_id.split(":")[1];
@@ -1644,8 +1729,15 @@ export async function handleInteraction(request, env, ctx) {
 
   const interaction = JSON.parse(rawBody);
   if (interaction.type === INTERACTION_TYPE.PING) return pong();
+  if (interaction.type === INTERACTION_TYPE.APPLICATION_COMMAND_AUTOCOMPLETE) {
+    if (interaction.data.name === "gen") {
+      return autocompleteResponse(await searchSteamSuggestions(focusedAutocompleteValue(interaction)));
+    }
+    return autocompleteResponse([]);
+  }
   if (interaction.type === INTERACTION_TYPE.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id || "";
+    if (isManifestJobComponent(customId)) return handleManifestJobComponent(env, interaction, ctx);
     if (isTicketComponent(customId)) return handleTicketComponent(env, interaction, ctx);
     if (customId.startsWith("selfrole_toggle:")) return handleSelfRoleComponent(env, interaction);
     if (customId === "giveaway_enter") return handleGiveawayComponent(env, interaction);
@@ -1653,14 +1745,19 @@ export async function handleInteraction(request, env, ctx) {
   }
   if (interaction.type === INTERACTION_TYPE.MODAL_SUBMIT) {
     const customId = interaction.data.custom_id || "";
+    if (isManifestJobModal(customId)) return handleManifestJobModal(env, interaction, ctx);
     if (isTicketModal(customId)) return handleTicketModal(env, interaction, ctx);
     return messageResponse("Unsupported modal.");
   }
   if (interaction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) return messageResponse("Unsupported interaction.");
 
   if (interaction.data.name === "request") {
-    ctx.waitUntil(handleRequestCommand(env, interaction).catch((error) => console.error("request failed", error)));
-    return messageResponse("Request submitted.", true);
+    ctx.waitUntil(handleManifestRequestCommand(env, interaction).catch((error) =>
+      editOriginalInteraction(env, interaction, "", null, {
+        embeds: [messageEmbed("Request Failed", error.message || "Request failed.", DANGER)]
+      }).catch(console.error)
+    ));
+    return deferredResponse(true);
   }
 
   if (interaction.data.name === "gen") {
@@ -1670,6 +1767,15 @@ export async function handleInteraction(request, env, ctx) {
       }).catch(console.error)
     ));
     return deferredResponse(false);
+  }
+
+  if (interaction.data.name === "fix") {
+    ctx.waitUntil(handleFixCommand(env, interaction).catch((error) =>
+      editOriginalInteraction(env, interaction, "", null, {
+        embeds: [messageEmbed("Repair Failed", error.message || "Repair request failed.", DANGER)]
+      }).catch(console.error)
+    ));
+    return deferredResponse(true);
   }
 
   if (PUBLIC_COMMANDS.has(interaction.data.name)) {
