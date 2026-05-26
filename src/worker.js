@@ -118,6 +118,30 @@ export class BotStorage {
         await this.state.storage.put("manifestJobs", jobs);
         return Response.json({ ok: true, job: jobs[index] });
       }
+      case "manifestChatUploadSessionStart": {
+        const sessions = await this.state.storage.get("manifestChatUploadSessions") || {};
+        const now = Date.now();
+        for (const [userId, session] of Object.entries(sessions)) {
+          if (!session?.expiresAt || Number(session.expiresAt) <= now) delete sessions[userId];
+        }
+        const existing = sessions[body.session?.userId];
+        if (existing && Number(existing.expiresAt) > now) {
+          await this.state.storage.put("manifestChatUploadSessions", sessions);
+          return Response.json({ ok: false, reason: "ACTIVE", session: existing });
+        }
+        sessions[body.session.userId] = body.session;
+        await this.state.storage.put("manifestChatUploadSessions", sessions);
+        return Response.json({ ok: true, session: body.session });
+      }
+      case "manifestChatUploadSessionEnd": {
+        const sessions = await this.state.storage.get("manifestChatUploadSessions") || {};
+        const existing = sessions[body.userId];
+        if (!existing || existing.id === body.sessionId) {
+          delete sessions[body.userId];
+          await this.state.storage.put("manifestChatUploadSessions", sessions);
+        }
+        return Response.json({ ok: true });
+      }
       default:
         return Response.json({ error: "Unknown storage op." }, { status: 400 });
     }

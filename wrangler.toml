@@ -16,6 +16,7 @@ GAMEGEN_API_URL = "https://gamegen.lol/api/mg_cca51ec305a5494a946454fcc21cf1c3/g
 GITHUB_OWNER = "BlissBlender"
 GITHUB_REPO = "Charon-Database"
 GITHUB_BRANCH = "main"
+CHAT_UPLOAD_MAX_BYTES = "95000000"
 
 [[durable_objects.bindings]]
 name = "BOT_STORAGE"

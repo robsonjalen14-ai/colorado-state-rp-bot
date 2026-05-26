@@ -9,6 +9,7 @@ export const BRAND = {
 };
 
 const WEBSITE_URL = "https://charon.vyro.workers.dev/";
+const WEBSITE_LOGO_URL = "https://charon.vyro.workers.dev/images/icon-512.png";
 
 function safeText(value, fallback = "Unknown") {
   const text = String(value || "").trim();
@@ -210,21 +211,24 @@ export function createNoResultsEmbed(appId) {
 
 export function createWebsiteEmbed() {
   return {
-    title: "Charon Website",
+    title: "🌐 CHARON WEBSITE",
     url: WEBSITE_URL,
     description: [
-      "**Open the official Charon hub**",
+      "Everything Charon in one place.",
       "",
-      "Download Charon, use Charon Gen, read the guide, and join the community from one clean page."
+      "━━━━━━━━━━━━━━",
+      "📦 Download Charon",
+      "⚙️ Use Charon Gen",
+      "📖 Read the Guide",
+      "💬 Join the Community",
+      "━━━━━━━━━━━━━━",
+      "",
+      "**Click below to open the website.**"
     ].join("\n"),
-    color: BRAND.purple,
-    fields: [{
-      name: "Launch",
-      value: `[Open Charon Website](${WEBSITE_URL})`,
-      inline: false
-    }],
+    color: 0x5865f2,
+    thumbnail: { url: WEBSITE_LOGO_URL },
     timestamp: new Date().toISOString(),
-    footer: { text: BRAND.name }
+    footer: { text: "Powered by Charon" }
   };
 }
 
@@ -234,7 +238,7 @@ export function websiteButton() {
     components: [{
       type: 2,
       style: 5,
-      label: "Open Website",
+      label: "🌐 Visit Website",
       url: WEBSITE_URL
     }]
   }];

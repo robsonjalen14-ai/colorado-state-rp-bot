@@ -47,7 +47,10 @@ test("createWebsiteEmbed and website button point at the public website", () => 
   const components = websiteButton();
 
   assert.equal(embed.url, "https://charon.vyro.workers.dev/");
-  assert.match(embed.description, /official Charon hub/i);
+  assert.equal(embed.title, "🌐 CHARON WEBSITE");
+  assert.match(embed.description, /Everything Charon in one place/i);
+  assert.equal(embed.thumbnail.url, "https://charon.vyro.workers.dev/images/icon-512.png");
+  assert.equal(components[0].components[0].label, "🌐 Visit Website");
   assert.equal(components[0].components[0].url, "https://charon.vyro.workers.dev/");
 });
 

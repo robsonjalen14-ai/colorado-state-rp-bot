@@ -56,11 +56,12 @@ export function pong() {
 }
 
 export function messageResponse(content, ephemeral = true, options = {}) {
+  const rawContent = options.rawContent ? truncate(content || "", 1900) : "";
   return json({
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      content: "",
-      embeds: options.embeds || [standardEmbed(content, options.color)],
+      content: rawContent,
+      embeds: options.embeds || (options.rawContent ? [] : [standardEmbed(content, options.color)]),
       components: options.components || [],
       flags: ephemeral ? FLAGS.EPHEMERAL : undefined
     }
@@ -220,6 +221,23 @@ export async function editOriginalInteraction(env, interaction, content, file = 
     if (!file) throw error;
     return upload();
   }
+}
+
+export async function sendInteractionFollowup(env, interaction, content, options = {}) {
+  const url = `${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}`;
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    timeout: 20000,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      content: options.rawContent ? truncate(content || "", 1900) : "",
+      embeds: options.embeds || (options.rawContent ? [] : [standardEmbed(content, options.color)]),
+      components: options.components || [],
+      flags: options.ephemeral === false ? undefined : FLAGS.EPHEMERAL
+    })
+  });
+  if (!response.ok) throw new Error(`Interaction followup failed: HTTP ${response.status}`);
+  return response.json();
 }
 
 export function interactionUser(interaction) {

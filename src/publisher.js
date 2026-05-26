@@ -160,6 +160,10 @@ export async function publishNewManifest(env, appId, fileName, bytes, uploadedBy
 }
 
 export async function publishFixManifest(env, appId, fileName, bytes, uploadedBy) {
+  return publishReplacingManifest(env, appId, fileName, bytes, uploadedBy, "Repair");
+}
+
+export async function publishReplacingManifest(env, appId, fileName, bytes, uploadedBy, label = "Publish") {
   const extPaths = [`${appId}.zip`, `${appId}.lua`].flatMap((name) => databaseUploadPaths(env, name));
   const uploadPaths = databaseUploadPaths(env, fileName);
   const allPaths = [...new Set([...extPaths, ...uploadPaths])];
@@ -183,13 +187,13 @@ export async function publishFixManifest(env, appId, fileName, bytes, uploadedBy
     }
 
     for (const path of uploadPaths) {
-      await putFile(env, path, bytes, `Repair manifest ${fileName} for ${appId} by ${uploadedBy}`);
+      await putFile(env, path, bytes, `${label} manifest ${fileName} for ${appId} by ${uploadedBy}`);
     }
 
     return { paths: uploadPaths };
   } catch (error) {
     await Promise.allSettled(snapshots.map((snapshot) =>
-      restoreSnapshot(env, snapshot, `Rollback failed repair for ${fileName}`)
+      restoreSnapshot(env, snapshot, `Rollback failed ${label.toLowerCase()} for ${fileName}`)
     ));
     throw error;
   }

@@ -20,7 +20,7 @@ No Discord Gateway, no websocket connection, and no external database.
 - Tickety-style support tickets with `/setticket`, category selection, modal descriptions, private channels, claim/close/reopen/delete buttons, user picker add, transcripts, and ticket logs.
 - Ticket staff permissions use stored bot admins from `/admin add`; no Discord staff role is required.
 - `/gen appid` supports Steam game-name autocomplete while preserving numeric AppID generation.
-- `/request` checks Charon repositories before creating a request, then supports upload publishing to both database folders.
+- `/request` checks Charon repositories before creating a request, then supports direct-URL upload and 60-second chat attachment upload publishing to both database folders.
 - `/fix` creates repair jobs that replace existing AppID ZIP/LUA variants in both database folders.
 - Request/fix workflow supports queue, claim, unclaim, cancel, status, history, stats, polished upload logs, and game-added announcements.
 - Utility commands for pings, publishing, embeds, welcome config, self-role panels, mail, suggestions, reports, appeals, backups, and server/message tools.
@@ -64,6 +64,7 @@ Paste a GitHub token with `repo` access for `GITHUB_TOKEN`; it is required for `
 - database URLs
 - GameGen API URL
 - GitHub owner/repo/branch for Charon Database
+- `CHAT_UPLOAD_MAX_BYTES` for the temporary chat upload size limit
 
 ## Register slash commands
 

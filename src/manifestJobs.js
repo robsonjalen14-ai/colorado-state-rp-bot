@@ -6,7 +6,8 @@ import {
   isStoredModerator,
   messageResponse,
   modalResponse,
-  sendChannelMessage
+  sendChannelMessage,
+  sendInteractionFollowup
 } from "./discord.js";
 import {
   fetchGameDetails,
@@ -15,7 +16,8 @@ import {
 import {
   countDatabaseFiles,
   publishFixManifest,
-  publishNewManifest
+  publishNewManifest,
+  publishReplacingManifest
 } from "./publisher.js";
 import {
   fetchWithTimeout,
@@ -32,6 +34,9 @@ const ORANGE = 0xf59e0b;
 const GREEN = 0x57f287;
 const RED = 0xed4245;
 const DARK = 0x2b2d31;
+const CHAT_UPLOAD_WINDOW_MS = 60000;
+const CHAT_UPLOAD_POLL_MS = 2500;
+const DEFAULT_CHAT_UPLOAD_MAX_BYTES = 95 * 1024 * 1024;
 
 const COMPONENT = {
   ACTION_ROW: 1,
@@ -79,17 +84,27 @@ function button(customId, label, style, emoji, disabled = false) {
 }
 
 function uploadButton(job, disabled = false, complete = false) {
-  return [
-    actionRow([
-      button(
-        `manifest_upload:${job.id}`,
-        complete ? "Uploaded" : job.type === "fix" ? "Upload Fix" : "Upload File",
-        complete ? BUTTON.SUCCESS : job.type === "fix" ? BUTTON.SECONDARY : BUTTON.PRIMARY,
-        complete ? "✔" : job.type === "fix" ? "🛠" : "⬆",
-        disabled
-      )
-    ])
+  const components = [
+    button(
+      `manifest_upload:${job.id}`,
+      complete ? "Uploaded" : job.type === "fix" ? "Upload Fix" : "Upload File",
+      complete ? BUTTON.SUCCESS : job.type === "fix" ? BUTTON.SECONDARY : BUTTON.PRIMARY,
+      complete ? "✔" : job.type === "fix" ? "🛠" : "⬆",
+      disabled
+    )
   ];
+
+  if (!complete) {
+    components.push(button(
+      `manifest_upload_chat:${job.id}`,
+      "Upload Via Chat",
+      BUTTON.PRIMARY,
+      "📤",
+      disabled
+    ));
+  }
+
+  return [actionRow(components)];
 }
 
 function userMention(id) {
@@ -171,6 +186,14 @@ async function updateJob(env, jobId, updater) {
 
 async function findJob(env, id) {
   return (await jobs(env)).find((job) => String(job.id) === String(id)) || null;
+}
+
+async function startChatUploadSession(env, session) {
+  return storageCall(env, "manifestChatUploadSessionStart", { session });
+}
+
+async function endChatUploadSession(env, sessionId, userId) {
+  return storageCall(env, "manifestChatUploadSessionEnd", { sessionId, userId }).catch(() => ({ ok: false }));
 }
 
 async function latestJobForApp(env, appId) {
@@ -329,8 +352,20 @@ function fileNameFromUrl(value) {
   }
 }
 
-function isAllowedFile(appId, fileName) {
-  return fileName === `${appId}.zip` || fileName === `${appId}.lua`;
+export function normalizeAllowedUploadFileName(appId, fileName, options = {}) {
+  const value = String(fileName || "");
+  if (value !== value.trim()) return null;
+  const expected = [`${appId}.zip`, `${appId}.lua`];
+  const match = expected.find((name) => (
+    options.caseInsensitive
+      ? name.toLowerCase() === value.toLowerCase()
+      : name === value
+  ));
+  return match || null;
+}
+
+function isAllowedFile(appId, fileName, options = {}) {
+  return Boolean(normalizeAllowedUploadFileName(appId, fileName, options));
 }
 
 async function downloadUpload(url) {
@@ -340,6 +375,30 @@ async function downloadUpload(url) {
   });
   if (!response.ok) throw new Error(`Upload download failed: HTTP ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+function chatUploadMaxBytes(env) {
+  const configured = Number(env.CHAT_UPLOAD_MAX_BYTES);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_CHAT_UPLOAD_MAX_BYTES;
+}
+
+function uploadSizeError(maxBytes) {
+  return `❌ File is too large. Maximum allowed size is ${Math.floor(maxBytes / 1024 / 1024)} MB.`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function downloadChatAttachment(attachment, maxBytes) {
+  if (Number(attachment.size || 0) > maxBytes) {
+    throw new Error(uploadSizeError(maxBytes));
+  }
+  const bytes = await downloadUpload(attachment.url);
+  if (bytes.byteLength > maxBytes) {
+    throw new Error(uploadSizeError(maxBytes));
+  }
+  return bytes;
 }
 
 async function editRequestMessage(env, job, embeds, components) {
@@ -444,6 +503,7 @@ export async function handleFixCommand(env, interaction) {
 
 export function isManifestJobComponent(customId = "") {
   return customId.startsWith("manifest_upload:") ||
+    customId.startsWith("manifest_upload_chat:") ||
     customId.startsWith("mail_close") ||
     customId.startsWith("mail_generate:") ||
     customId.startsWith("mail_fix:");
@@ -453,7 +513,7 @@ export function isManifestJobModal(customId = "") {
   return customId.startsWith("manifest_upload_modal:");
 }
 
-export async function handleManifestJobComponent(env, interaction) {
+export async function handleManifestJobComponent(env, interaction, ctx) {
   const customId = interaction.data.custom_id || "";
   if (customId === "mail_close") {
     return messageResponse("Mail closed.", true);
@@ -473,6 +533,9 @@ export async function handleManifestJobComponent(env, interaction) {
   if (job.status === "COMPLETED" || job.uploaded) {
     return messageResponse("", true, { embeds: [alreadyCompletedEmbed(job.type === "fix")] });
   }
+  if (customId.startsWith("manifest_upload_chat:")) {
+    return startChatUploadFlow(env, interaction, ctx, job);
+  }
   return uploadModal(job);
 }
 
@@ -485,25 +548,17 @@ export async function handleManifestJobModal(env, interaction, ctx) {
 
 async function processUpload(env, interaction, jobId, url) {
   const user = interactionUser(interaction);
-  const started = await storageCall(env, "manifestJobStartUpload", { jobId, userId: user.id });
-  if (!started.ok) {
-    await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [started.reason === "COMPLETED" ? alreadyCompletedEmbed(started.job?.type === "fix") : {
-        color: ORANGE,
-        title: "⚠ Upload Busy",
-        description: "Another upload is already being processed for this request.",
-        timestamp: new Date().toISOString()
-      }]
-    });
-    return;
-  }
+  const started = await startJobUpload(env, interaction, jobId, user.id, (embeds) =>
+    editOriginalInteraction(env, interaction, "", null, { embeds })
+  );
+  if (!started.ok) return;
 
   let job = started.job;
   const repair = job.type === "fix";
   const fileName = fileNameFromUrl(url);
 
   if (!isAllowedFile(job.appId, fileName)) {
-    job = await updateJob(env, job.id, (current) => ({ ...current, status: "PENDING", uploadStartedBy: null }));
+    job = await resetJobUpload(env, job.id);
     await editOriginalInteraction(env, interaction, "", null, {
       embeds: [uploadRejectedEmbed(job.appId, repair)]
     });
@@ -512,61 +567,272 @@ async function processUpload(env, interaction, jobId, url) {
 
   try {
     const bytes = await downloadUpload(url);
-    const publish = repair
+    await completeUploadFromBytes(env, interaction, job, fileName, bytes, user, {
+      publishMode: repair ? "fix" : "new",
+      success: {
+        title: repair ? "🎉 Repair uploaded successfully" : "🎉 Upload Successful",
+        description: "Your file has been published."
+      },
+      respond: (embeds) => editOriginalInteraction(env, interaction, "", null, { embeds })
+    });
+  } catch (error) {
+    await failUpload(env, interaction, job, repair, fileName, user.id, error, (embeds) =>
+      editOriginalInteraction(env, interaction, "", null, { embeds })
+    );
+  }
+}
+
+async function startJobUpload(env, interaction, jobId, userId, respond) {
+  const started = await storageCall(env, "manifestJobStartUpload", { jobId, userId });
+  if (!started.ok) {
+    await respond([started.reason === "COMPLETED" ? alreadyCompletedEmbed(started.job?.type === "fix") : {
+      color: ORANGE,
+      title: "⚠ Upload Busy",
+      description: "Another upload is already being processed for this request.",
+      timestamp: new Date().toISOString()
+    }]);
+    await addHistory(env, {
+      appId: started.job?.appId || "unknown",
+      jobId,
+      type: started.job?.type || "unknown",
+      action: "Upload busy",
+      userId,
+      status: started.reason || "BUSY"
+    });
+    return { ok: false };
+  }
+  return started;
+}
+
+async function resetJobUpload(env, jobId) {
+  return updateJob(env, jobId, (current) => ({ ...current, status: "PENDING", uploadStartedBy: null, uploadStartedAt: null }));
+}
+
+async function completeUploadFromBytes(env, interaction, job, fileName, bytes, user, options = {}) {
+  const repair = job.type === "fix";
+  const publishMode = options.publishMode || (repair ? "fix" : "new");
+  const publish = publishMode === "replace"
+    ? await publishReplacingManifest(env, job.appId, fileName, bytes, user.id, "Chat upload")
+    : repair
       ? await publishFixManifest(env, job.appId, fileName, bytes, user.id)
       : await publishNewManifest(env, job.appId, fileName, bytes, user.id);
 
-    const game = await fetchGameDetails(job.appId);
-    job = await updateJob(env, job.id, (current) => ({
-      ...current,
-      status: "COMPLETED",
-      uploaded: true,
-      uploadedBy: user.id,
-      uploadedAt: utcNow(),
-      fileName,
-      publishedPaths: publish.paths
-    }));
+  const game = await fetchGameDetails(job.appId);
+  const updated = await updateJob(env, job.id, (current) => ({
+    ...current,
+    status: "COMPLETED",
+    uploaded: true,
+    uploadedBy: user.id,
+    uploadedAt: utcNow(),
+    fileName,
+    publishedPaths: publish.paths
+  }));
+  await addHistory(env, {
+    appId: updated.appId,
+    jobId: updated.id,
+    type: updated.type,
+    action: options.historyAction || (repair ? "Repair uploaded" : "Manifest uploaded"),
+    userId: user.id,
+    fileName,
+    status: "COMPLETED",
+    method: options.method || "direct-url"
+  });
+  await editRequestMessage(env, updated, [completedEmbed(updated, game)], uploadButton(updated, true, true));
+  await options.respond([{
+    color: GREEN,
+    title: options.success?.title || (repair ? "🎉 Repair uploaded successfully" : "🎉 Upload Successful"),
+    description: options.success?.description || "Your file has been published.",
+    timestamp: new Date().toISOString()
+  }]);
+  await sendChannelMessage(env, ANNOUNCE_CHANNEL, "", {
+    embeds: [announcementEmbed(updated, game)]
+  });
+  return updated;
+}
+
+async function failUpload(env, interaction, job, repair, fileName, userId, error, respond) {
+  const updated = await updateJob(env, job.id, (current) => ({
+    ...current,
+    status: "FAILED",
+    uploaded: false,
+    failure: error.message || "Publish failed"
+  }));
+  await addHistory(env, {
+    appId: updated.appId,
+    jobId: updated.id,
+    type: updated.type,
+    action: repair ? "Repair failed" : "Upload failed",
+    userId,
+    fileName,
+    status: "FAILED",
+    reason: error.message || "Publish failed"
+  });
+  await respond([publishFailedEmbed()]);
+}
+
+async function startChatUploadFlow(env, interaction, ctx, job) {
+  const user = interactionUser(interaction);
+  const now = Date.now();
+  const session = {
+    id: `${job.id}:${user.id}:${now}`,
+    userId: user.id,
+    channelId: interaction.channel_id,
+    jobId: job.id,
+    appId: job.appId,
+    startedAt: now,
+    expiresAt: now + CHAT_UPLOAD_WINDOW_MS
+  };
+  const started = await startChatUploadSession(env, session);
+  if (!started.ok) {
+    return messageResponse("You already have an active upload session. Finish it or wait for it to expire.", true);
+  }
+  await addHistory(env, {
+    appId: job.appId,
+    jobId: job.id,
+    type: job.type,
+    action: "Chat upload session started",
+    userId: user.id,
+    channelId: interaction.channel_id,
+    status: "WAITING"
+  });
+  ctx.waitUntil(watchChatUploadSession(env, interaction, session));
+  return messageResponse(
+    `**📤 You have 60 seconds to upload the file for App ID ${job.appId} in this channel. Drop it now!**`,
+    true,
+    { rawContent: true }
+  );
+}
+
+async function watchChatUploadSession(env, interaction, session) {
+  const seen = new Set();
+  const maxBytes = chatUploadMaxBytes(env);
+  try {
+    while (Date.now() < session.expiresAt) {
+      const messages = await discordApi(env, `/channels/${session.channelId}/messages?limit=10`).catch(() => []);
+      const ordered = Array.isArray(messages)
+        ? messages.slice().sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+        : [];
+
+      for (const message of ordered) {
+        if (seen.has(message.id)) continue;
+        if (new Date(message.timestamp).getTime() < session.startedAt) continue;
+        seen.add(message.id);
+        if (message.author?.id !== session.userId) continue;
+        const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+        if (!attachments.length) continue;
+
+        const accepted = attachments.find((attachment) =>
+          normalizeAllowedUploadFileName(session.appId, attachment.filename, { caseInsensitive: true })
+        );
+        if (!accepted) {
+          await sendInteractionFollowup(env, interaction, [
+            "❌ Invalid filename.",
+            "Accepted formats:",
+            `• ${session.appId}.zip`,
+            `• ${session.appId}.lua`
+          ].join("\n"), { rawContent: true }).catch(() => null);
+          await addHistory(env, {
+            appId: session.appId,
+            jobId: session.jobId,
+            type: "chat-upload",
+            action: "Chat upload rejected",
+            userId: session.userId,
+            channelId: session.channelId,
+            status: "REJECTED",
+            reason: "Invalid filename"
+          });
+          continue;
+        }
+
+        const normalizedFileName = normalizeAllowedUploadFileName(session.appId, accepted.filename, { caseInsensitive: true });
+        if (Number(accepted.size || 0) > maxBytes) {
+          await sendInteractionFollowup(env, interaction, uploadSizeError(maxBytes), { rawContent: true }).catch(() => null);
+          await addHistory(env, {
+            appId: session.appId,
+            jobId: session.jobId,
+            type: "chat-upload",
+            action: "Chat upload rejected",
+            userId: session.userId,
+            channelId: session.channelId,
+            fileName: normalizedFileName,
+            status: "REJECTED",
+            reason: "File too large"
+          });
+          continue;
+        }
+
+        const user = interactionUser(interaction);
+        const started = await startJobUpload(env, interaction, session.jobId, session.userId, (embeds) =>
+          sendInteractionFollowup(env, interaction, "", { embeds }).catch(() => null)
+        );
+        if (!started.ok) {
+          await endChatUploadSession(env, session.id, session.userId);
+          return;
+        }
+
+        try {
+          const bytes = await downloadChatAttachment(accepted, maxBytes);
+          await completeUploadFromBytes(env, interaction, started.job, normalizedFileName, bytes, user, {
+            publishMode: "replace",
+            method: "chat-upload",
+            historyAction: started.job.type === "fix" ? "Repair uploaded via chat" : "Manifest uploaded via chat",
+            success: {
+              title: "✅ Upload complete.",
+              description: [
+                `App ID: \`${session.appId}\``,
+                `File: \`${normalizedFileName}\``,
+                "",
+                "Updated:",
+                "• Database 1",
+                "• Database 2"
+              ].join("\n")
+            },
+            respond: (embeds) => sendInteractionFollowup(env, interaction, "", { embeds }).catch(() => null)
+          });
+          await endChatUploadSession(env, session.id, session.userId);
+          return;
+        } catch (error) {
+          if (/File is too large/i.test(error.message || "")) {
+            await resetJobUpload(env, started.job.id);
+            await sendInteractionFollowup(env, interaction, uploadSizeError(maxBytes), { rawContent: true }).catch(() => null);
+            await addHistory(env, {
+              appId: session.appId,
+              jobId: session.jobId,
+              type: "chat-upload",
+              action: "Chat upload rejected",
+              userId: session.userId,
+              channelId: session.channelId,
+              fileName: normalizedFileName,
+              status: "REJECTED",
+              reason: "File too large"
+            });
+            continue;
+          }
+          await failUpload(env, interaction, started.job, started.job.type === "fix", normalizedFileName, session.userId, error, (embeds) =>
+            sendInteractionFollowup(env, interaction, "", { embeds }).catch(() => null)
+          );
+          await endChatUploadSession(env, session.id, session.userId);
+          return;
+        }
+      }
+      await sleep(CHAT_UPLOAD_POLL_MS);
+    }
+
     await addHistory(env, {
-      appId: job.appId,
-      jobId: job.id,
-      type: job.type,
-      action: repair ? "Repair uploaded" : "Manifest uploaded",
-      userId: user.id,
-      fileName,
-      status: "COMPLETED"
+      appId: session.appId,
+      jobId: session.jobId,
+      type: "chat-upload",
+      action: "Chat upload expired",
+      userId: session.userId,
+      channelId: session.channelId,
+      status: "TIMEOUT",
+      reason: "No valid attachment in 60 seconds"
     });
-    await editRequestMessage(env, job, [completedEmbed(job, game)], uploadButton(job, true, true));
-    await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [{
-        color: GREEN,
-        title: repair ? "🎉 Repair uploaded successfully" : "🎉 Upload Successful",
-        description: "Your file has been published.",
-        timestamp: new Date().toISOString()
-      }]
-    });
-    await sendChannelMessage(env, ANNOUNCE_CHANNEL, "", {
-      embeds: [announcementEmbed(job, game)]
-    });
-  } catch (error) {
-    job = await updateJob(env, job.id, (current) => ({
-      ...current,
-      status: "FAILED",
-      uploaded: false,
-      failure: error.message || "Publish failed"
-    }));
-    await addHistory(env, {
-      appId: job.appId,
-      jobId: job.id,
-      type: job.type,
-      action: repair ? "Repair failed" : "Upload failed",
-      userId: user.id,
-      fileName,
-      status: "FAILED",
-      reason: error.message || "Publish failed"
-    });
-    await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [publishFailedEmbed()]
-    });
+    await sendInteractionFollowup(env, interaction, "⌛ Upload window expired.\nRun the command again to upload.", {
+      rawContent: true
+    }).catch(() => null);
+  } finally {
+    await endChatUploadSession(env, session.id, session.userId);
   }
 }
 
