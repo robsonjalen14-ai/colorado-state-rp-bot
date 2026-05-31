@@ -129,13 +129,13 @@ export function createLuaZip(appId, luaBytes) {
 }
 
 export function createLuaManifestZip(appId, luaBytes, manifests = []) {
-  const files = [{ name: `scripts/${appId}.lua`, bytes: luaBytes }];
+  const files = [{ name: `${appId}.lua`, bytes: luaBytes }];
   const seen = new Set(files.map((file) => file.name));
 
   for (const manifest of manifests) {
     const fileName = String(manifest?.fileName || "").trim();
     if (!fileName || !/\.manifest$/i.test(fileName)) continue;
-    const zipName = `manifests/${fileName}`;
+    const zipName = fileName;
     if (seen.has(zipName)) continue;
     seen.add(zipName);
     files.push({ name: zipName, bytes: manifest.bytes });

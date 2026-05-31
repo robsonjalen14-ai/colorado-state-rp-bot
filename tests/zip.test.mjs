@@ -24,17 +24,19 @@ test("createLuaZip creates a valid zip signature", () => {
   assert.match(text, /480\.lua/);
 });
 
-test("createLuaManifestZip stores lua and manifest files in package folders without duplicates", () => {
+test("createLuaManifestZip stores lua and manifest files at zip root without duplicates", () => {
   const zip = createLuaManifestZip("480", new TextEncoder().encode("print('ok')"), [
     { fileName: "228980_111.manifest", bytes: new TextEncoder().encode("manifest-a") },
     { fileName: "228980_111.manifest", bytes: new TextEncoder().encode("manifest-a-duplicate") },
     { fileName: "228981_222.manifest", bytes: new TextEncoder().encode("manifest-b") }
   ]);
   const text = new TextDecoder().decode(zip);
-  assert.match(text, /scripts\/480\.lua/);
-  assert.match(text, /manifests\/228980_111\.manifest/);
-  assert.match(text, /manifests\/228981_222\.manifest/);
-  assert.equal((text.match(/manifests\/228980_111\.manifest/g) || []).length, 2);
+  assert.match(text, /480\.lua/);
+  assert.match(text, /228980_111\.manifest/);
+  assert.match(text, /228981_222\.manifest/);
+  assert.doesNotMatch(text, /scripts\/480\.lua/);
+  assert.doesNotMatch(text, /manifests\/228980_111\.manifest/);
+  assert.equal((text.match(/228980_111\.manifest/g) || []).length, 2);
 });
 
 test("lua parser extracts CharonManifestInstall depot ids and direct manifest names", () => {
@@ -148,8 +150,10 @@ test("lookupPackage bundles required manifests when loose lua is generated", asy
     assert.equal(result.kind, "lua");
     assert.equal(result.source, "Used Charon Repo");
     assert.equal(result.manifestSource, "Manifest Vault");
-    assert.match(text, /scripts\/480\.lua/);
-    assert.match(text, /manifests\/228980_111\.manifest/);
+    assert.match(text, /480\.lua/);
+    assert.match(text, /228980_111\.manifest/);
+    assert.doesNotMatch(text, /scripts\/480\.lua/);
+    assert.doesNotMatch(text, /manifests\/228980_111\.manifest/);
     assert.equal(seen.filter((entry) => entry.url.endsWith("/228980_111.manifest")).length, 1);
   } finally {
     globalThis.fetch = originalFetch;
@@ -198,8 +202,8 @@ test("lookupPackage still returns lua-only zip when optional manifests are missi
     const text = new TextDecoder().decode(result.bytes);
     assert.equal(result.kind, "lua");
     assert.equal(result.manifestSource, "");
-    assert.match(text, /scripts\/480\.lua/);
-    assert.doesNotMatch(text, /manifests\/228980_111\.manifest/);
+    assert.match(text, /480\.lua/);
+    assert.doesNotMatch(text, /228980_111\.manifest/);
   } finally {
     globalThis.fetch = originalFetch;
   }
