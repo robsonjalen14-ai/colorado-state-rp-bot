@@ -1,10 +1,15 @@
-import { createLuaZip } from "./zip.js";
+import { createLuaManifestZip } from "./zip.js";
 import { fetchJson, fetchWithTimeout, getConfiguredBasePaths, joinUrl } from "./utils.js";
 
 const STORE_DETAILS_URL = "https://store.steampowered.com/api/appdetails?appids=";
 const STORE_DETAILS_FILTERS = "basic,release_date,publishers,developers,genres";
 const STEAMSPY_DETAILS_URL = "https://steamspy.com/api.php?request=appdetails&appid=";
 const STEAM_SUGGEST_URL = "https://store.steampowered.com/search/suggest";
+const STEAMCMD_INFO_URL = "https://api.steamcmd.net/v1/info/";
+const DEFAULT_PRIMARY_MANIFEST_REPOSITORIES = "https://raw.githubusercontent.com/BlissBlender/ManifestVault/main";
+const DEFAULT_FALLBACK_MANIFEST_REPOSITORIES = "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main";
+const DEPOT_ADDAPPID_RE = /addappid\s*\(\s*(\d+)\s*,\s*\d+\s*,\s*["'][a-fA-F0-9]+["']/gi;
+const DIRECT_MANIFEST_FILE_RE = /\b(\d{3,})_(\d{3,})\.manifest\b/gi;
 
 const PROXIES = [
   (url) => url,
@@ -57,6 +62,182 @@ async function downloadBytes(url, timeout = 30000) {
   const response = await fetchWithTimeout(url, { timeout });
   if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+function parseUrlList(value, fallback = "") {
+  const raw = String(value || fallback || "");
+  return raw
+    .split(/[\n,]+/)
+    .map((item) => item.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+function manifestRepositoryGroups(env) {
+  return [
+    {
+      type: "primary",
+      repositories: parseUrlList(env.MANIFEST_PRIMARY_URLS || env.PRIMARY_MANIFEST_REPOSITORIES, DEFAULT_PRIMARY_MANIFEST_REPOSITORIES)
+    },
+    {
+      type: "fallback",
+      repositories: parseUrlList(env.MANIFEST_FALLBACK_URLS || env.FALLBACK_MANIFEST_REPOSITORIES, DEFAULT_FALLBACK_MANIFEST_REPOSITORIES)
+    }
+  ].filter((group) => group.repositories.length);
+}
+
+function configuredManifestPaths(env) {
+  const raw = env.MANIFEST_REPOSITORY_BASE_PATHS ?? "";
+  const paths = String(raw)
+    .split(/[\n,]+/)
+    .map((item) => item.trim().replace(/^\/+|\/+$/g, ""))
+    .filter((item, index, array) => array.indexOf(item) === index);
+  return paths.length ? paths : [""];
+}
+
+function manifestRepositoryCandidates(env, fileName) {
+  const paths = configuredManifestPaths(env);
+  return manifestRepositoryGroups(env).map((group) => ({
+    ...group,
+    candidates: group.repositories.flatMap((repository) =>
+      paths.map((basePath) => {
+        const path = basePath ? `${basePath}/${fileName}` : fileName;
+        return {
+          repository,
+          fileName,
+          url: joinUrl(repository, path)
+        };
+      })
+    )
+  }));
+}
+
+export function extractDepotIdsFromLua(luaText) {
+  const depots = new Set();
+  const content = String(luaText || "");
+  for (const match of content.matchAll(DEPOT_ADDAPPID_RE)) {
+    depots.add(match[1]);
+  }
+  return [...depots];
+}
+
+export function extractDirectManifestFileNames(luaText) {
+  const files = new Set();
+  const content = String(luaText || "");
+  for (const match of content.matchAll(DIRECT_MANIFEST_FILE_RE)) {
+    files.add(`${match[1]}_${match[2]}.manifest`);
+  }
+  return [...files];
+}
+
+async function fetchSteamCmdAppInfo(appId) {
+  try {
+    const data = await fetchJson(`${STEAMCMD_INFO_URL}${appId}`, { timeout: 12000 });
+    return data?.status === "success" ? data : null;
+  } catch (error) {
+    logManifestBundle(`SteamCMD app info unavailable for ${appId}: ${error.message}`);
+    return null;
+  }
+}
+
+function manifestFileNamesFromAppInfo(appInfo, appId, depotIds) {
+  const files = new Set();
+  const depots = appInfo?.data?.[appId]?.depots;
+  if (!depots || typeof depots !== "object") return [];
+
+  for (const depotId of depotIds) {
+    const manifestId = depots?.[depotId]?.manifests?.public?.gid;
+    if (manifestId) files.add(`${depotId}_${manifestId}.manifest`);
+  }
+
+  return [...files];
+}
+
+async function findManifestInRepositories(env, fileName, cache) {
+  if (cache.has(fileName)) return cache.get(fileName);
+
+  for (const group of manifestRepositoryCandidates(env, fileName)) {
+    const attempts = group.candidates.map(async (candidate) => {
+      logManifestBundle(`Searching ${group.type} manifest source: ${candidate.url}`);
+      try {
+        const bytes = await downloadBytes(candidate.url, 15000);
+        if (!bytes.length) return null;
+        return {
+          fileName,
+          bytes,
+          source: group.type,
+          url: candidate.url
+        };
+      } catch {
+        return null;
+      }
+    });
+
+    const settled = await Promise.allSettled(attempts);
+    const found = settled.find((result) => result.status === "fulfilled" && result.value)?.value;
+    if (found) {
+      logManifestBundle(`Found manifest ${fileName} in ${found.source}: ${found.url}`);
+      cache.set(fileName, found);
+      return found;
+    }
+  }
+
+  logManifestBundle(`Skipped missing manifest ${fileName}; no configured source had it.`);
+  cache.set(fileName, null);
+  return null;
+}
+
+async function collectRequiredManifests(env, appId, luaBytes) {
+  try {
+    const luaText = new TextDecoder().decode(luaBytes);
+    const depotIds = extractDepotIdsFromLua(luaText);
+    const requiredFiles = new Set(extractDirectManifestFileNames(luaText));
+
+    if (depotIds.length) {
+      const appInfo = await fetchSteamCmdAppInfo(appId);
+      for (const fileName of manifestFileNamesFromAppInfo(appInfo, appId, depotIds)) {
+        requiredFiles.add(fileName);
+      }
+    }
+
+    if (!requiredFiles.size) {
+      logManifestBundle(`No manifest identifiers detected for AppID ${appId}; returning Lua-only package.`);
+      return [];
+    }
+
+    const cache = new Map();
+    const manifests = [];
+    const added = new Set();
+
+    for (const fileName of requiredFiles) {
+      const found = await findManifestInRepositories(env, fileName, cache);
+      if (!found || added.has(found.fileName)) continue;
+      added.add(found.fileName);
+      manifests.push(found);
+    }
+
+    logManifestBundle(`AppID ${appId}: bundled ${manifests.length}/${requiredFiles.size} optional manifest file(s).`);
+    return manifests;
+  } catch (error) {
+    logManifestBundle(`Manifest bundling skipped for AppID ${appId}: ${error.message}`);
+    return [];
+  }
+}
+
+function manifestSourceLabel(source) {
+  return source === "primary" ? "Manifest Vault" : "External Vault";
+}
+
+function summarizeManifestSources(manifests) {
+  const labels = [...new Set(
+    manifests
+      .map((manifest) => manifestSourceLabel(manifest.source))
+      .filter(Boolean)
+  )];
+  return labels.join(" + ");
+}
+
+function logManifestBundle(message) {
+  console.log(`[manifest-bundle] ${message}`);
 }
 
 function candidatePaths(env, appId, fileName) {
@@ -159,11 +340,13 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   for (const candidate of candidatePaths(env, appId, `${appId}.lua`)) {
     if (await headExists(candidate.url)) {
       const luaBytes = includeBytes ? await downloadBytes(candidate.url) : null;
+      const manifests = includeBytes ? await collectRequiredManifests(env, appId, luaBytes) : [];
       return {
         source: "Used Charon Repo",
+        manifestSource: summarizeManifestSources(manifests),
         kind: "lua",
         fileName: `${appId}.zip`,
-        bytes: includeBytes ? createLuaZip(appId, luaBytes) : undefined,
+        bytes: includeBytes ? createLuaManifestZip(appId, luaBytes, manifests) : undefined,
         url: candidate.url
       };
     }

@@ -18,6 +18,7 @@ test("createManifestEmbed returns one premium result card with image and badges"
       banner: "https://cdn.cloudflare.steamstatic.com/steam/apps/3542380/header.jpg"
     },
     source: "Used External API",
+    manifestSource: "Manifest Vault",
     elapsedMs: 1234,
     accentColor: 0x123456
   });
@@ -28,6 +29,7 @@ test("createManifestEmbed returns one premium result card with image and badges"
   assert.match(embed.description, /Example Game/);
   assert.match(embed.description, /AppID 3542380/);
   assert.match(embed.description, /External API/);
+  assert.match(embed.description, /Manifest Vault/);
   assert.equal(embed.fields.length, 1);
   assert.match(embed.fields[0].value, /Download ready/);
 });

@@ -59,8 +59,11 @@ export function createZip(files) {
   const centralParts = [];
   const { dosTime, dosDate } = dosDateTime();
   let localOffset = 0;
+  const seenNames = new Set();
 
   for (const file of files) {
+    if (!file?.name || seenNames.has(file.name)) continue;
+    seenNames.add(file.name);
     const fileNameBytes = ZIP_ENCODER.encode(file.name);
     const dataBytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
     const checksum = crc32(dataBytes);
@@ -123,4 +126,20 @@ export function createZip(files) {
 
 export function createLuaZip(appId, luaBytes) {
   return createZip([{ name: `${appId}.lua`, bytes: luaBytes }]);
+}
+
+export function createLuaManifestZip(appId, luaBytes, manifests = []) {
+  const files = [{ name: `scripts/${appId}.lua`, bytes: luaBytes }];
+  const seen = new Set(files.map((file) => file.name));
+
+  for (const manifest of manifests) {
+    const fileName = String(manifest?.fileName || "").trim();
+    if (!fileName || !/\.manifest$/i.test(fileName)) continue;
+    const zipName = `manifests/${fileName}`;
+    if (seen.has(zipName)) continue;
+    seen.add(zipName);
+    files.push({ name: zipName, bytes: manifest.bytes });
+  }
+
+  return createZip(files);
 }

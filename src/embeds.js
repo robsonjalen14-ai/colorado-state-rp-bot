@@ -144,12 +144,21 @@ export async function extractImageAccentColor(imageUrl, seed = "") {
   }
 }
 
-export function createManifestEmbed({ game, source, elapsedMs, accentColor }) {
+export function createManifestEmbed({ game, source, manifestSource, elapsedMs, accentColor }) {
   const appId = safeText(game?.appId);
   const title = safeText(game?.name, `Steam App ${appId}`);
   const publisher = publisherText(game);
   const release = releaseText(game);
   const sourceName = sourceLabel(source);
+  const badges = [
+    badge(`🎮 AppID ${appId}`),
+    badge(`📅 ${release}`),
+    badge(`⚡ ${sourceName}`)
+  ];
+
+  if (manifestSource) {
+    badges.push(badge(`📦 ${manifestSource}`));
+  }
 
   const embed = {
     title: "✅ Manifest Ready",
@@ -159,11 +168,7 @@ export function createManifestEmbed({ game, source, elapsedMs, accentColor }) {
       `**${truncate(title, 220)}**`,
       truncate(publisher, 240),
       "",
-      [
-        badge(`🎮 AppID ${appId}`),
-        badge(`📅 ${release}`),
-        badge(`⚡ ${sourceName}`)
-      ].join(" ")
+      badges.join(" ")
     ].join("\n"),
     color: accentColor || fallbackAccent(appId),
     fields: [{

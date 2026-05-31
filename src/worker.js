@@ -438,6 +438,7 @@ async function handleGenCommand(env, interaction) {
   const manifestEmbed = createManifestEmbed({
     game,
     source: result.source,
+    manifestSource: result.manifestSource,
     elapsedMs: Date.now() - startedAt,
     accentColor
   });

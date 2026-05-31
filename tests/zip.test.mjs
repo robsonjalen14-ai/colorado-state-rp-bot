@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGameGenGenerateUrl, isZipBytes, lookupPackage, lookupRepositoryPackage } from "../src/github.js";
-import { createLuaZip, crc32 } from "../src/zip.js";
+import {
+  buildGameGenGenerateUrl,
+  extractDepotIdsFromLua,
+  extractDirectManifestFileNames,
+  isZipBytes,
+  lookupPackage,
+  lookupRepositoryPackage
+} from "../src/github.js";
+import { createLuaManifestZip, createLuaZip, crc32 } from "../src/zip.js";
 
 test("crc32 matches known value", () => {
   assert.equal(crc32(new TextEncoder().encode("hello")), 0x3610a686);
@@ -15,6 +22,30 @@ test("createLuaZip creates a valid zip signature", () => {
   assert.equal(zip[3], 0x04);
   const text = new TextDecoder().decode(zip);
   assert.match(text, /480\.lua/);
+});
+
+test("createLuaManifestZip stores lua and manifest files in package folders without duplicates", () => {
+  const zip = createLuaManifestZip("480", new TextEncoder().encode("print('ok')"), [
+    { fileName: "228980_111.manifest", bytes: new TextEncoder().encode("manifest-a") },
+    { fileName: "228980_111.manifest", bytes: new TextEncoder().encode("manifest-a-duplicate") },
+    { fileName: "228981_222.manifest", bytes: new TextEncoder().encode("manifest-b") }
+  ]);
+  const text = new TextDecoder().decode(zip);
+  assert.match(text, /scripts\/480\.lua/);
+  assert.match(text, /manifests\/228980_111\.manifest/);
+  assert.match(text, /manifests\/228981_222\.manifest/);
+  assert.equal((text.match(/manifests\/228980_111\.manifest/g) || []).length, 2);
+});
+
+test("lua parser extracts CharonManifestInstall depot ids and direct manifest names", () => {
+  const lua = `
+    addappid(228980, 1, "abcdef123456")
+    addappid(228980, 1, "abcdef123456")
+    addappid(228981, 1, "abcdef123456")
+    local file = "228980_111.manifest"
+  `;
+  assert.deepEqual(extractDepotIdsFromLua(lua), ["228980", "228981"]);
+  assert.deepEqual(extractDirectManifestFileNames(lua), ["228980_111.manifest"]);
 });
 
 test("buildGameGenGenerateUrl appends AppID when URL ends at generate", () => {
@@ -57,6 +88,166 @@ test("lookupPackage falls back to external API zip when Charon repo misses", asy
     assert.equal(result.fileName, "2215200.zip");
     assert.equal(isZipBytes(result.bytes), true);
     assert.equal(seen.some((entry) => entry.url.endsWith("/2215200?format=zip")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lookupPackage bundles required manifests when loose lua is generated", async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const seen = [];
+  const lua = encoder.encode('addappid(228980, 1, "abcdef123456")');
+  const manifestBytes = encoder.encode("manifest-content");
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+    seen.push({ url: value, method });
+
+    if (method === "HEAD" && value.endsWith("/480.zip")) {
+      return new Response("", { status: 404 });
+    }
+    if (method === "HEAD" && value.endsWith("/480.lua")) {
+      return new Response("", { status: value.includes("database-1") ? 200 : 404 });
+    }
+    if (method === "GET" && value.endsWith("/480.lua")) {
+      return new Response(lua, { status: 200, headers: { "Content-Type": "text/plain" } });
+    }
+    if (method === "GET" && value === "https://api.steamcmd.net/v1/info/480") {
+      return Response.json({
+        status: "success",
+        data: {
+          480: {
+            depots: {
+              228980: {
+                manifests: {
+                  public: { gid: "111" }
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    if (method === "GET" && value === "https://raw.githubusercontent.com/BlissBlender/ManifestVault/main/228980_111.manifest") {
+      return new Response(manifestBytes, { status: 200, headers: { "Content-Type": "application/octet-stream" } });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: "",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "480");
+
+    const text = new TextDecoder().decode(result.bytes);
+    assert.equal(result.kind, "lua");
+    assert.equal(result.source, "Used Charon Repo");
+    assert.equal(result.manifestSource, "Manifest Vault");
+    assert.match(text, /scripts\/480\.lua/);
+    assert.match(text, /manifests\/228980_111\.manifest/);
+    assert.equal(seen.filter((entry) => entry.url.endsWith("/228980_111.manifest")).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lookupPackage still returns lua-only zip when optional manifests are missing", async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const lua = encoder.encode('addappid(228980, 1, "abcdef123456")');
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+
+    if (method === "HEAD" && value.endsWith("/480.zip")) return new Response("", { status: 404 });
+    if (method === "HEAD" && value.endsWith("/480.lua")) return new Response("", { status: value.includes("database-1") ? 200 : 404 });
+    if (method === "GET" && value.endsWith("/480.lua")) return new Response(lua, { status: 200 });
+    if (method === "GET" && value === "https://api.steamcmd.net/v1/info/480") {
+      return Response.json({
+        status: "success",
+        data: {
+          480: {
+            depots: {
+              228980: {
+                manifests: {
+                  public: { gid: "111" }
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: "",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "480");
+
+    const text = new TextDecoder().decode(result.bytes);
+    assert.equal(result.kind, "lua");
+    assert.equal(result.manifestSource, "");
+    assert.match(text, /scripts\/480\.lua/);
+    assert.doesNotMatch(text, /manifests\/228980_111\.manifest/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lookupPackage labels fallback manifest source as External Vault", async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const lua = encoder.encode('addappid(228980, 1, "abcdef123456")');
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+
+    if (method === "HEAD" && value.endsWith("/480.zip")) return new Response("", { status: 404 });
+    if (method === "HEAD" && value.endsWith("/480.lua")) return new Response("", { status: value.includes("database-1") ? 200 : 404 });
+    if (method === "GET" && value.endsWith("/480.lua")) return new Response(lua, { status: 200 });
+    if (method === "GET" && value === "https://api.steamcmd.net/v1/info/480") {
+      return Response.json({
+        status: "success",
+        data: {
+          480: {
+            depots: {
+              228980: {
+                manifests: {
+                  public: { gid: "111" }
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    if (method === "GET" && value === "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/228980_111.manifest") {
+      return new Response(encoder.encode("fallback-manifest"), { status: 200 });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: "",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "480");
+
+    assert.equal(result.manifestSource, "External Vault");
   } finally {
     globalThis.fetch = originalFetch;
   }
