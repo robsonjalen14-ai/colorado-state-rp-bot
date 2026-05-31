@@ -11,7 +11,7 @@ No Discord Gateway, no websocket connection, and no external database.
   1. Database 1
   2. Database 2
   3. GameGen external API, including direct ZIP fallback with `format=zip`
-- Direct `appid.zip` is returned as-is.
+- Direct `appid.zip` is inspected in memory; if it contains Lua files, the bot adds only missing required `.manifest` files and keeps existing manifest files.
 - Direct `appid.lua` is zipped in memory as `appid.zip`; when possible the bot also parses the Lua, resolves required depot manifests, and adds found `.manifest` files beside the Lua at the ZIP root.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
 - Shows Steam game details in a single premium Discord embed with the game banner, source, AppID, publisher, release date, and a dynamic artwork-based accent color.

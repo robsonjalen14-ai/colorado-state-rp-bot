@@ -1,4 +1,4 @@
-import { createLuaManifestZip } from "./zip.js";
+import { createFlatZipFromEntries, createLuaManifestZip, readZipEntries } from "./zip.js";
 import { fetchJson, fetchWithTimeout, getConfiguredBasePaths, joinUrl } from "./utils.js";
 
 const STORE_DETAILS_URL = "https://store.steampowered.com/api/appdetails?appids=";
@@ -186,40 +186,96 @@ async function findManifestInRepositories(env, fileName, cache) {
   return null;
 }
 
-async function collectRequiredManifests(env, appId, luaBytes) {
-  try {
-    const luaText = new TextDecoder().decode(luaBytes);
-    const depotIds = extractDepotIdsFromLua(luaText);
-    const requiredFiles = new Set(extractDirectManifestFileNames(luaText));
+async function requiredManifestFileNamesForLuaEntries(appId, luaEntries) {
+  const requiredFiles = new Set();
+  const depotIds = new Set();
 
-    if (depotIds.length) {
-      const appInfo = await fetchSteamCmdAppInfo(appId);
-      for (const fileName of manifestFileNamesFromAppInfo(appInfo, appId, depotIds)) {
+  for (const luaEntry of luaEntries) {
+    try {
+      const luaText = new TextDecoder().decode(luaEntry.bytes);
+      for (const fileName of extractDirectManifestFileNames(luaText)) {
         requiredFiles.add(fileName);
       }
+      for (const depotId of extractDepotIdsFromLua(luaText)) {
+        depotIds.add(depotId);
+      }
+    } catch (error) {
+      logManifestBundle(`Lua parsing skipped for ${luaEntry.name || appId}: ${error.message}`);
     }
+  }
 
-    if (!requiredFiles.size) {
+  if (depotIds.size) {
+    const appInfo = await fetchSteamCmdAppInfo(appId);
+    for (const fileName of manifestFileNamesFromAppInfo(appInfo, appId, [...depotIds])) {
+      requiredFiles.add(fileName);
+    }
+  }
+
+  return [...requiredFiles];
+}
+
+async function downloadManifestFiles(env, fileNames, appId) {
+  if (!fileNames.length) {
+    logManifestBundle(`No missing manifest files to fetch for AppID ${appId}.`);
+    return [];
+  }
+
+  const cache = new Map();
+  const manifests = [];
+  const added = new Set();
+
+  for (const fileName of fileNames) {
+    const found = await findManifestInRepositories(env, fileName, cache);
+    if (!found || added.has(found.fileName)) continue;
+    added.add(found.fileName);
+    manifests.push(found);
+  }
+
+  logManifestBundle(`AppID ${appId}: bundled ${manifests.length}/${fileNames.length} missing optional manifest file(s).`);
+  return manifests;
+}
+
+async function collectRequiredManifests(env, appId, luaBytes) {
+  try {
+    const requiredFiles = await requiredManifestFileNamesForLuaEntries(appId, [{ name: `${appId}.lua`, bytes: luaBytes }]);
+
+    if (!requiredFiles.length) {
       logManifestBundle(`No manifest identifiers detected for AppID ${appId}; returning Lua-only package.`);
       return [];
     }
 
-    const cache = new Map();
-    const manifests = [];
-    const added = new Set();
-
-    for (const fileName of requiredFiles) {
-      const found = await findManifestInRepositories(env, fileName, cache);
-      if (!found || added.has(found.fileName)) continue;
-      added.add(found.fileName);
-      manifests.push(found);
-    }
-
-    logManifestBundle(`AppID ${appId}: bundled ${manifests.length}/${requiredFiles.size} optional manifest file(s).`);
-    return manifests;
+    return downloadManifestFiles(env, requiredFiles, appId);
   } catch (error) {
     logManifestBundle(`Manifest bundling skipped for AppID ${appId}: ${error.message}`);
     return [];
+  }
+}
+
+async function enrichZipWithMissingManifests(env, appId, zipBytes) {
+  try {
+    const entries = readZipEntries(zipBytes);
+    const luaEntries = entries.filter((entry) => /\.lua$/i.test(entry.name));
+    if (!luaEntries.length) {
+      logManifestBundle(`Database ZIP for AppID ${appId} has no Lua files; returning original ZIP.`);
+      return { bytes: zipBytes, manifestSource: "" };
+    }
+
+    const requiredFiles = await requiredManifestFileNamesForLuaEntries(appId, luaEntries);
+    const existingManifests = new Set(
+      entries
+        .filter((entry) => /\.manifest$/i.test(entry.name))
+        .map((entry) => entry.name.toLowerCase())
+    );
+    const missingFiles = requiredFiles.filter((fileName) => !existingManifests.has(fileName.toLowerCase()));
+    const manifests = await downloadManifestFiles(env, missingFiles, appId);
+
+    return {
+      bytes: createFlatZipFromEntries(entries, manifests),
+      manifestSource: summarizeManifestSources(manifests)
+    };
+  } catch (error) {
+    logManifestBundle(`Database ZIP enrichment skipped for AppID ${appId}: ${error.message}`);
+    return { bytes: zipBytes, manifestSource: "" };
   }
 }
 
@@ -327,11 +383,14 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   const includeBytes = options.includeBytes !== false;
   for (const candidate of candidatePaths(env, appId, `${appId}.zip`)) {
     if (await headExists(candidate.url)) {
+      const zipBytes = includeBytes ? await downloadBytes(candidate.url) : undefined;
+      const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes) : null;
       return {
         source: "Used Charon Repo",
+        manifestSource: enriched?.manifestSource || "",
         kind: "zip",
         fileName: candidate.fileName,
-        bytes: includeBytes ? await downloadBytes(candidate.url) : undefined,
+        bytes: enriched?.bytes ?? zipBytes,
         url: candidate.url
       };
     }
@@ -354,11 +413,14 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
 
   const indexed = await findIndexedZip(env, appId);
   if (indexed) {
+    const zipBytes = includeBytes ? await downloadBytes(indexed.url) : undefined;
+    const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes) : null;
     return {
       source: "Used Charon Repo",
+      manifestSource: enriched?.manifestSource || "",
       kind: "indexed-zip",
       fileName: indexed.fileName.endsWith(".zip") ? indexed.fileName : `${appId}.zip`,
-      bytes: includeBytes ? await downloadBytes(indexed.url) : undefined,
+      bytes: enriched?.bytes ?? zipBytes,
       url: indexed.url
     };
   }

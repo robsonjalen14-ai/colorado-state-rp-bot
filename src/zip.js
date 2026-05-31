@@ -1,3 +1,5 @@
+import { unzipSync } from "fflate";
+
 const ZIP_ENCODER = new TextEncoder();
 
 const CRC_TABLE = (() => {
@@ -60,10 +62,12 @@ export function createZip(files) {
   const { dosTime, dosDate } = dosDateTime();
   let localOffset = 0;
   const seenNames = new Set();
+  let entryCount = 0;
 
   for (const file of files) {
     if (!file?.name || seenNames.has(file.name)) continue;
     seenNames.add(file.name);
+    entryCount += 1;
     const fileNameBytes = ZIP_ENCODER.encode(file.name);
     const dataBytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
     const checksum = crc32(dataBytes);
@@ -115,13 +119,62 @@ export function createZip(files) {
   end.u32(0x06054b50);
   end.u16(0);
   end.u16(0);
-  end.u16(files.length);
-  end.u16(files.length);
+  end.u16(entryCount);
+  end.u16(entryCount);
   end.u32(centralSize);
   end.u32(centralOffset);
   end.u16(0);
 
   return new Uint8Array([...parts, ...centralParts, end.bytes].flatMap((part) => [...part]));
+}
+
+function zipRootName(name) {
+  return String(name || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)
+    .pop() || "";
+}
+
+export function readZipEntries(zipBytes) {
+  const bytes = zipBytes instanceof Uint8Array ? zipBytes : new Uint8Array(zipBytes);
+  const unzipped = unzipSync(bytes);
+  return Object.entries(unzipped)
+    .map(([name, data]) => ({
+      originalName: name,
+      name: zipRootName(name),
+      bytes: data instanceof Uint8Array ? data : new Uint8Array(data)
+    }))
+    .filter((entry) => entry.name && !entry.originalName.endsWith("/"));
+}
+
+export function luaEntriesFromZip(zipBytes) {
+  return readZipEntries(zipBytes).filter((entry) => /\.lua$/i.test(entry.name));
+}
+
+export function createFlatZipFromEntries(entries, manifests = []) {
+  const files = [];
+  const seen = new Set();
+
+  for (const entry of entries) {
+    const name = zipRootName(entry.name || entry.originalName);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push({ name, bytes: entry.bytes });
+  }
+
+  for (const manifest of manifests) {
+    const name = zipRootName(manifest?.fileName);
+    if (!name || !/\.manifest$/i.test(name)) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    files.push({ name, bytes: manifest.bytes });
+  }
+
+  return createZip(files);
 }
 
 export function createLuaZip(appId, luaBytes) {

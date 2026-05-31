@@ -12,6 +12,7 @@
     "check": "node --check src/index.js && node --check src/worker.js && node --check src/discord.js && node --check src/github.js && node --check src/publisher.js && node --check src/manifestJobs.js && node --check src/zip.js && node --check src/commands.js && node --check src/embeds.js && node --check src/tickets.js && node --check src/utils.js"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "jpeg-js": "^0.4.4",
     "tweetnacl": "^1.0.3"
   },
