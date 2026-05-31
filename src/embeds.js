@@ -155,10 +155,7 @@ export function createManifestEmbed({ game, source, manifestSource, elapsedMs, a
     badge(`📅 ${release}`),
     badge(`⚡ ${sourceName}`)
   ];
-
-  if (manifestSource) {
-    badges.push(badge(`📦 ${manifestSource}`));
-  }
+  const manifestBadge = manifestSource ? badge(`📦 ${manifestSource}`) : "";
 
   const embed = {
     title: "✅ Manifest Ready",
@@ -168,7 +165,8 @@ export function createManifestEmbed({ game, source, manifestSource, elapsedMs, a
       `**${truncate(title, 220)}**`,
       truncate(publisher, 240),
       "",
-      badges.join(" ")
+      badges.join(" "),
+      ...(manifestBadge ? [manifestBadge] : [])
     ].join("\n"),
     color: accentColor || fallbackAccent(appId),
     fields: [{
