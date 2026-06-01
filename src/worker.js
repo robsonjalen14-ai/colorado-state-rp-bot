@@ -26,7 +26,7 @@ import {
   extractImageAccentColor,
   websiteButton
 } from "./embeds.js";
-import { autoPublishExternalPackage } from "./autoPublish.js";
+import { autoPublishExternalManifest, autoPublishExternalPackage } from "./autoPublish.js";
 import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
 import {
   MANIFEST_JOB_COMMANDS,
@@ -79,6 +79,37 @@ const INTERACTION_TYPE = {
 const SUCCESS = 0x05fff7;
 const DANGER = 0xef4444;
 const MOD = 0x8b5cf6;
+const SITE_BACKFILL_ORIGINS = [
+  "https://charon.vyro.workers.dev",
+  "https://charon.co.in",
+  "https://www.charon.co.in"
+];
+
+function corsHeaders(env, request) {
+  const origin = request.headers.get("Origin") || "";
+  const configuredOrigins = String(env.SITE_BACKFILL_ORIGINS || "")
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const origins = configuredOrigins.length ? configuredOrigins : SITE_BACKFILL_ORIGINS;
+  const allowOrigin = origins.includes(origin) ? origin : origins[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin"
+  };
+}
+
+function jsonResponse(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...headers,
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  });
+}
 
 export class BotStorage {
   constructor(state) {
@@ -1826,8 +1857,52 @@ export async function handleInteraction(request, env, ctx) {
   return deferredResponse(false);
 }
 
+async function handleSiteBackfill(request, env) {
+  const headers = corsHeaders(env, request);
+
+  try {
+    const payload = await request.json();
+
+    if (payload?.type === "external-package") {
+      const appId = normalizeAppId(payload.appId);
+      const repositoryResult = await lookupPackage(env, appId);
+      if (repositoryResult?.source !== "Used External API" || !repositoryResult.bytes?.length || repositoryResult.kind === "api-link") {
+        return jsonResponse({
+          ok: false,
+          skipped: true,
+          reason: repositoryResult ? "not-external-package" : "not-found"
+        }, 200, headers);
+      }
+
+      const game = await fetchGameDetails(appId).catch(() => null);
+      const published = await autoPublishExternalPackage(env, appId, repositoryResult, game);
+      return jsonResponse({ ok: true, type: payload.type, appId, published }, 200, headers);
+    }
+
+    if (payload?.type === "manifest-vault") {
+      const published = await autoPublishExternalManifest(env, payload.fileName);
+      return jsonResponse({ ok: true, type: payload.type, published }, 200, headers);
+    }
+
+    return jsonResponse({ ok: false, error: "Unsupported backfill type." }, 400, headers);
+  } catch (error) {
+    return jsonResponse({ ok: false, error: error.message || "Backfill failed." }, 500, headers);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/backfill") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(env, request) });
+      }
+      if (request.method !== "POST") {
+        return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
+      }
+      return handleSiteBackfill(request, env, ctx);
+    }
+
     if (request.method === "GET") {
       return text("Charon Discord bot is running.");
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { autoPublishExternalPackage } from "../src/autoPublish.js";
+import { autoPublishExternalManifest, autoPublishExternalPackage } from "../src/autoPublish.js";
 
 test("autoPublishExternalPackage uploads external ZIP to both databases and announces Charon Bot", async () => {
   const originalFetch = globalThis.fetch;
@@ -66,4 +66,38 @@ test("autoPublishExternalPackage ignores non-external results", async () => {
 
   assert.equal(result.published, false);
   assert.equal(result.reason, "not-external-package");
+});
+
+test("autoPublishExternalManifest copies fallback manifest into ManifestVault", async () => {
+  const originalFetch = globalThis.fetch;
+  const puts = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+
+    if (method === "GET" && value === "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/228980_111.manifest") {
+      return new Response(new TextEncoder().encode("manifest"), { status: 200 });
+    }
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/228980_111.manifest?ref=main") {
+      return new Response("not found", { status: 404 });
+    }
+    if (method === "PUT" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/228980_111.manifest") {
+      puts.push(JSON.parse(options.body));
+      return Response.json({ content: { path: "228980_111.manifest" } });
+    }
+
+    throw new Error(`Unexpected fetch: ${method} ${value}`);
+  };
+
+  try {
+    const result = await autoPublishExternalManifest({ GITHUB_TOKEN: "token" }, "228980_111.manifest");
+
+    assert.equal(result.published, true);
+    assert.equal(result.result.uploaded, true);
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].message, "Backfill 228980_111.manifest from External Vault");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

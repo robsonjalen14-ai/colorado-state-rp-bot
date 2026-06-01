@@ -1,8 +1,9 @@
 import { sendChannelMessage } from "./discord.js";
-import { publishNewManifest } from "./publisher.js";
-import { truncate } from "./utils.js";
+import { publishManifestVaultFile, publishNewManifest } from "./publisher.js";
+import { fetchWithTimeout, joinUrl, truncate } from "./utils.js";
 
 export const GAMES_ADDED_CHANNEL = "1508749560669933648";
+const DEFAULT_FALLBACK_MANIFEST_REPOSITORIES = "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main";
 
 function safeList(value, fallback = "Unknown") {
   return Array.isArray(value) && value.length ? value.join(", ") : fallback;
@@ -63,4 +64,46 @@ export async function autoPublishExternalPackage(env, appId, result, game = null
     console.log(`[auto-publish] External package backfill skipped for AppID ${appId}: ${error.message}`);
     return { published: false, error: error.message };
   }
+}
+
+function parseUrlList(value, fallback = "") {
+  return String(value || fallback || "")
+    .split(/[\n,]+/)
+    .map((item) => item.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+function normalizeManifestFileName(fileName) {
+  const clean = String(fileName || "").split(/[\\/]/).filter(Boolean).pop() || "";
+  if (!/^\d+_\d+\.manifest$/i.test(clean)) {
+    throw new Error(`Invalid manifest filename: ${fileName}`);
+  }
+  return clean;
+}
+
+export async function autoPublishExternalManifest(env, fileName) {
+  const cleanFileName = normalizeManifestFileName(fileName);
+  const repositories = parseUrlList(
+    env.MANIFEST_FALLBACK_URLS || env.FALLBACK_MANIFEST_REPOSITORIES,
+    DEFAULT_FALLBACK_MANIFEST_REPOSITORIES
+  );
+
+  for (const repository of repositories) {
+    const url = joinUrl(repository, cleanFileName);
+    try {
+      const response = await fetchWithTimeout(url, {
+        timeout: 20000,
+        headers: { Accept: "application/octet-stream, text/plain, */*" },
+        cf: { cacheTtl: 0 }
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!response.ok || !bytes.length) continue;
+      const published = await publishManifestVaultFile(env, cleanFileName, bytes, "External Vault");
+      return { published: true, fileName: cleanFileName, source: url, result: published };
+    } catch (error) {
+      console.log(`[auto-publish] External manifest source skipped for ${cleanFileName}: ${error.message}`);
+    }
+  }
+
+  return { published: false, fileName: cleanFileName, reason: "not-found" };
 }
