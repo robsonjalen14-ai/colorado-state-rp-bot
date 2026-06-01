@@ -434,6 +434,65 @@ test("lookupPackage labels fallback manifest source as External Vault", async ()
   }
 });
 
+test("lookupPackage backfills fallback manifests into ManifestVault when requested", async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const lua = encoder.encode('addappid(228980, 1, "abcdef123456")');
+  const puts = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+
+    if (method === "HEAD" && value.endsWith("/480.zip")) return new Response("", { status: 404 });
+    if (method === "HEAD" && value.endsWith("/480.lua")) return new Response("", { status: value.includes("database-1") ? 200 : 404 });
+    if (method === "GET" && value.endsWith("/480.lua")) return new Response(lua, { status: 200 });
+    if (method === "GET" && value === "https://api.steamcmd.net/v1/info/480") {
+      return Response.json({
+        status: "success",
+        data: {
+          480: {
+            depots: {
+              228980: {
+                manifests: {
+                  public: { gid: "111" }
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+    if (method === "GET" && value === "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/228980_111.manifest") {
+      return new Response(encoder.encode("fallback-manifest"), { status: 200 });
+    }
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/228980_111.manifest?ref=main") {
+      return new Response("not found", { status: 404 });
+    }
+    if (method === "PUT" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/228980_111.manifest") {
+      puts.push(JSON.parse(options.body));
+      return Response.json({ content: { path: "228980_111.manifest" } });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: "",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/",
+      GITHUB_TOKEN: "token"
+    }, "480", { awaitBackfills: true });
+
+    assert.equal(result.manifestSource, "External Vault");
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].message, "Backfill 228980_111.manifest from External Vault");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("lookupRepositoryPackage can check Charon repo without downloading bytes", async () => {
   const originalFetch = globalThis.fetch;
   const seen = [];

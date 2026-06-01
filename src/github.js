@@ -1,4 +1,5 @@
 import { createFlatZipFromEntries, createLuaManifestZip, readZipEntries } from "./zip.js";
+import { publishManifestVaultFile } from "./publisher.js";
 import { fetchJson, fetchWithTimeout, getConfiguredBasePaths, joinUrl } from "./utils.js";
 
 const STORE_DETAILS_URL = "https://store.steampowered.com/api/appdetails?appids=";
@@ -152,7 +153,7 @@ function manifestFileNamesFromAppInfo(appInfo, appId, depotIds) {
   return [...files];
 }
 
-async function findManifestInRepositories(env, fileName, cache) {
+async function findManifestInRepositories(env, fileName, cache, options = {}) {
   if (cache.has(fileName)) return cache.get(fileName);
 
   for (const group of manifestRepositoryCandidates(env, fileName)) {
@@ -177,6 +178,8 @@ async function findManifestInRepositories(env, fileName, cache) {
     if (found) {
       logManifestBundle(`Found manifest ${fileName} in ${found.source}: ${found.url}`);
       cache.set(fileName, found);
+      const backfill = scheduleManifestVaultBackfill(env, found, options);
+      if (backfill && options.awaitBackfills) await backfill;
       return found;
     }
   }
@@ -214,7 +217,7 @@ async function requiredManifestFileNamesForLuaEntries(appId, luaEntries) {
   return [...requiredFiles];
 }
 
-async function downloadManifestFiles(env, fileNames, appId) {
+async function downloadManifestFiles(env, fileNames, appId, options = {}) {
   if (!fileNames.length) {
     logManifestBundle(`No missing manifest files to fetch for AppID ${appId}.`);
     return [];
@@ -225,7 +228,7 @@ async function downloadManifestFiles(env, fileNames, appId) {
   const added = new Set();
 
   for (const fileName of fileNames) {
-    const found = await findManifestInRepositories(env, fileName, cache);
+    const found = await findManifestInRepositories(env, fileName, cache, options);
     if (!found || added.has(found.fileName)) continue;
     added.add(found.fileName);
     manifests.push(found);
@@ -235,7 +238,7 @@ async function downloadManifestFiles(env, fileNames, appId) {
   return manifests;
 }
 
-async function collectRequiredManifests(env, appId, luaBytes) {
+async function collectRequiredManifests(env, appId, luaBytes, options = {}) {
   try {
     const requiredFiles = await requiredManifestFileNamesForLuaEntries(appId, [{ name: `${appId}.lua`, bytes: luaBytes }]);
 
@@ -244,14 +247,14 @@ async function collectRequiredManifests(env, appId, luaBytes) {
       return [];
     }
 
-    return downloadManifestFiles(env, requiredFiles, appId);
+    return downloadManifestFiles(env, requiredFiles, appId, options);
   } catch (error) {
     logManifestBundle(`Manifest bundling skipped for AppID ${appId}: ${error.message}`);
     return [];
   }
 }
 
-async function enrichZipWithMissingManifests(env, appId, zipBytes) {
+async function enrichZipWithMissingManifests(env, appId, zipBytes, options = {}) {
   try {
     const entries = readZipEntries(zipBytes);
     const luaEntries = entries.filter((entry) => /\.lua$/i.test(entry.name));
@@ -267,7 +270,7 @@ async function enrichZipWithMissingManifests(env, appId, zipBytes) {
         .map((entry) => entry.name.toLowerCase())
     );
     const missingFiles = requiredFiles.filter((fileName) => !existingManifests.has(fileName.toLowerCase()));
-    const manifests = await downloadManifestFiles(env, missingFiles, appId);
+    const manifests = await downloadManifestFiles(env, missingFiles, appId, options);
 
     return {
       bytes: createFlatZipFromEntries(entries, manifests),
@@ -294,6 +297,33 @@ function summarizeManifestSources(manifests) {
 
 function logManifestBundle(message) {
   console.log(`[manifest-bundle] ${message}`);
+}
+
+function scheduleManifestVaultBackfill(env, manifest, options = {}) {
+  if (manifest?.source !== "fallback" || !manifest.bytes?.length) return null;
+  if (typeof options.waitUntil !== "function" && !options.awaitBackfills) return null;
+
+  const task = publishManifestVaultFile(env, manifest.fileName, manifest.bytes, "External Vault")
+    .then((result) => {
+      if (result?.uploaded) {
+        logManifestBundle(`Backfilled ${manifest.fileName} into ManifestVault at ${result.path}.`);
+      } else {
+        logManifestBundle(`ManifestVault backfill skipped for ${manifest.fileName}: ${result?.reason || "not uploaded"}.`);
+      }
+      return result;
+    })
+    .catch((error) => {
+      logManifestBundle(`ManifestVault backfill failed for ${manifest.fileName}: ${error.message}`);
+      return { uploaded: false, error: error.message };
+    });
+
+  if (typeof options.waitUntil === "function") {
+    options.waitUntil(task);
+  }
+  if (options.awaitBackfills) {
+    return task;
+  }
+  return null;
 }
 
 function candidatePaths(env, appId, fileName) {
@@ -384,7 +414,7 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   for (const candidate of candidatePaths(env, appId, `${appId}.zip`)) {
     if (await headExists(candidate.url)) {
       const zipBytes = includeBytes ? await downloadBytes(candidate.url) : undefined;
-      const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes) : null;
+      const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes, options) : null;
       return {
         source: "Used Charon Repo",
         manifestSource: enriched?.manifestSource || "",
@@ -399,7 +429,7 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   for (const candidate of candidatePaths(env, appId, `${appId}.lua`)) {
     if (await headExists(candidate.url)) {
       const luaBytes = includeBytes ? await downloadBytes(candidate.url) : null;
-      const manifests = includeBytes ? await collectRequiredManifests(env, appId, luaBytes) : [];
+      const manifests = includeBytes ? await collectRequiredManifests(env, appId, luaBytes, options) : [];
       return {
         source: "Used Charon Repo",
         manifestSource: summarizeManifestSources(manifests),
@@ -414,7 +444,7 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   const indexed = await findIndexedZip(env, appId);
   if (indexed) {
     const zipBytes = includeBytes ? await downloadBytes(indexed.url) : undefined;
-    const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes) : null;
+    const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes, options) : null;
     return {
       source: "Used Charon Repo",
       manifestSource: enriched?.manifestSource || "",
@@ -511,8 +541,8 @@ function withQuery(url, key, value) {
   return result.toString();
 }
 
-export async function lookupPackage(env, appId) {
-  const repositoryResult = await lookupRepositoryPackage(env, appId);
+export async function lookupPackage(env, appId, options = {}) {
+  const repositoryResult = await lookupRepositoryPackage(env, appId, options);
   if (repositoryResult) return repositoryResult;
   return resolveExternalApi(env, appId);
 }

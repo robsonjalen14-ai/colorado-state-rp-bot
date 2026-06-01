@@ -10,6 +10,14 @@ function githubConfig(env) {
   return { owner, repo, branch, token: env.GITHUB_TOKEN };
 }
 
+function manifestVaultConfig(env) {
+  const owner = env.MANIFEST_VAULT_OWNER || env.GITHUB_OWNER || "BlissBlender";
+  const repo = env.MANIFEST_VAULT_REPO || "ManifestVault";
+  const branch = env.MANIFEST_VAULT_BRANCH || env.GITHUB_BRANCH || "main";
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not configured.");
+  return { owner, repo, branch, token: env.GITHUB_TOKEN };
+}
+
 function databaseFolder(databaseId) {
   return databaseId === "database-2" ? "database-2" : "database-1";
 }
@@ -45,8 +53,7 @@ function base64ToBytes(value) {
   return bytes;
 }
 
-async function githubRequest(env, path, options = {}) {
-  const config = githubConfig(env);
+async function githubRequestWithConfig(config, path, options = {}) {
   const response = await fetchWithTimeout(`${GITHUB_API}${path}`, {
     timeout: options.timeout ?? 30000,
     method: options.method || "GET",
@@ -69,15 +76,31 @@ async function githubRequest(env, path, options = {}) {
   return response.json();
 }
 
-function contentPath(env, filePath) {
-  const config = githubConfig(env);
+async function githubRequest(env, path, options = {}) {
+  return githubRequestWithConfig(githubConfig(env), path, options);
+}
+
+function contentPathForConfig(config, filePath) {
   return `/repos/${config.owner}/${config.repo}/contents/${filePath.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function contentPath(env, filePath) {
+  return contentPathForConfig(githubConfig(env), filePath);
 }
 
 async function getFile(env, filePath) {
   const config = githubConfig(env);
   try {
     return await githubRequest(env, `${contentPath(env, filePath)}?ref=${encodeURIComponent(config.branch)}`);
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
+async function getFileWithConfig(config, filePath) {
+  try {
+    return await githubRequestWithConfig(config, `${contentPathForConfig(config, filePath)}?ref=${encodeURIComponent(config.branch)}`);
   } catch (error) {
     if (error.status === 404) return null;
     throw error;
@@ -98,6 +121,19 @@ async function existingFileBytes(existing) {
 async function putFile(env, filePath, bytes, message, sha = undefined) {
   const config = githubConfig(env);
   return githubRequest(env, contentPath(env, filePath), {
+    method: "PUT",
+    timeout: 60000,
+    body: {
+      message,
+      content: bytesToBase64(bytes),
+      branch: config.branch,
+      sha
+    }
+  });
+}
+
+async function putFileWithConfig(config, filePath, bytes, message, sha = undefined) {
+  return githubRequestWithConfig(config, contentPathForConfig(config, filePath), {
     method: "PUT",
     timeout: 60000,
     body: {
@@ -157,6 +193,35 @@ export async function publishNewManifest(env, appId, fileName, bytes, uploadedBy
     ));
     throw error;
   }
+}
+
+function manifestVaultUploadPath(env, fileName) {
+  const cleanFileName = String(fileName || "").split(/[\\/]/).filter(Boolean).pop();
+  if (!/^\d+_\d+\.manifest$/i.test(cleanFileName || "")) {
+    throw new Error(`Invalid manifest filename: ${fileName}`);
+  }
+  const basePath = String(env.MANIFEST_VAULT_BASE_PATH || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  return [basePath, cleanFileName].filter(Boolean).join("/");
+}
+
+export async function publishManifestVaultFile(env, fileName, bytes, sourceLabel = "External Vault") {
+  const config = manifestVaultConfig(env);
+  const path = manifestVaultUploadPath(env, fileName);
+  const existing = await getFileWithConfig(config, path);
+  if (existing) {
+    return { uploaded: false, path, reason: "exists" };
+  }
+
+  await putFileWithConfig(
+    config,
+    path,
+    bytes,
+    `Backfill ${fileName} from ${sourceLabel}`
+  );
+
+  return { uploaded: true, path };
 }
 
 export async function publishFixManifest(env, appId, fileName, bytes, uploadedBy) {

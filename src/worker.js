@@ -26,6 +26,7 @@ import {
   extractImageAccentColor,
   websiteButton
 } from "./embeds.js";
+import { autoPublishExternalPackage } from "./autoPublish.js";
 import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
 import {
   MANIFEST_JOB_COMMANDS,
@@ -415,7 +416,7 @@ async function handlePoll(env, interaction) {
   return "Poll created.";
 }
 
-async function handleGenCommand(env, interaction) {
+async function handleGenCommand(env, interaction, ctx = null) {
   const startedAt = Date.now();
   const appId = normalizeAppId(getOptionValue(interaction.data.options, "appid"));
   await editOriginalInteraction(env, interaction, "", null, {
@@ -424,7 +425,9 @@ async function handleGenCommand(env, interaction) {
 
   const [game, result] = await Promise.all([
     fetchGameDetails(appId),
-    lookupPackage(env, appId)
+    lookupPackage(env, appId, {
+      waitUntil: (promise) => ctx?.waitUntil?.(promise)
+    })
   ]);
 
   if (!result) {
@@ -442,6 +445,8 @@ async function handleGenCommand(env, interaction) {
     elapsedMs: Date.now() - startedAt,
     accentColor
   });
+
+  ctx?.waitUntil?.(autoPublishExternalPackage(env, appId, result, game));
 
   if (result.downloadUrl && !result.bytes) {
     await editOriginalInteraction(env, interaction, "", null, {
@@ -1786,7 +1791,7 @@ export async function handleInteraction(request, env, ctx) {
   }
 
   if (interaction.data.name === "gen") {
-    ctx.waitUntil(handleGenCommand(env, interaction).catch((error) =>
+    ctx.waitUntil(handleGenCommand(env, interaction, ctx).catch((error) =>
       editOriginalInteraction(env, interaction, "", null, {
         embeds: [messageEmbed("Generation Failed", error.message || "Generation failed.", DANGER)]
       }).catch(console.error)
