@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { autoPublishExternalManifest, autoPublishExternalPackage } from "../src/autoPublish.js";
+import { createZip } from "../src/zip.js";
 
-test("autoPublishExternalPackage uploads external ZIP to both databases and announces Charon Bot", async () => {
+test("autoPublishExternalPackage uploads external ZIP to both databases, backfills bundled manifests, and announces Charon Bot", async () => {
   const originalFetch = globalThis.fetch;
-  const puts = [];
+  const dbPuts = [];
+  const vaultPuts = [];
   const announcements = [];
+  const externalZip = createZip([
+    { name: "2215200.lua", bytes: new TextEncoder().encode("addappid(2215201, 1, \"abcdef0123456789abcdef0123456789\")") },
+    { name: "2215201_123456789.manifest", bytes: new TextEncoder().encode("manifest") }
+  ]);
 
   globalThis.fetch = async (url, options = {}) => {
     const value = String(url);
@@ -15,8 +21,15 @@ test("autoPublishExternalPackage uploads external ZIP to both databases and anno
       return new Response("not found", { status: 404 });
     }
     if (method === "PUT" && value.includes("/repos/BlissBlender/Charon-Database/contents/database-")) {
-      puts.push({ url: value, body: JSON.parse(options.body) });
+      dbPuts.push({ url: value, body: JSON.parse(options.body) });
       return Response.json({ content: { path: value.split("/contents/")[1] } });
+    }
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/2215201_123456789.manifest?ref=main") {
+      return new Response("not found", { status: 404 });
+    }
+    if (method === "PUT" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/2215201_123456789.manifest") {
+      vaultPuts.push({ url: value, body: JSON.parse(options.body) });
+      return Response.json({ content: { path: "2215201_123456789.manifest" } });
     }
     if (method === "POST" && value.endsWith("/channels/1508749560669933648/messages")) {
       announcements.push(JSON.parse(options.body));
@@ -34,7 +47,7 @@ test("autoPublishExternalPackage uploads external ZIP to both databases and anno
       source: "Used External API",
       kind: "api",
       fileName: "2215200.zip",
-      bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04])
+      bytes: externalZip
     }, {
       appId: "2215200",
       name: "LEGO Batman",
@@ -46,9 +59,15 @@ test("autoPublishExternalPackage uploads external ZIP to both databases and anno
     });
 
     assert.equal(result.published, true);
-    assert.equal(puts.length, 2);
-    assert.ok(puts.some((put) => put.url.endsWith("/database-1/2215200.zip")));
-    assert.ok(puts.some((put) => put.url.endsWith("/database-2/2215200.zip")));
+    assert.equal(dbPuts.length, 2);
+    assert.ok(dbPuts.some((put) => put.url.endsWith("/database-1/2215200.zip")));
+    assert.ok(dbPuts.some((put) => put.url.endsWith("/database-2/2215200.zip")));
+    assert.equal(vaultPuts.length, 1);
+    assert.equal(vaultPuts[0].body.message, "Backfill 2215201_123456789.manifest from External API ZIP");
+    assert.deepEqual(result.manifestBackfill.uploaded, [{
+      fileName: "2215201_123456789.manifest",
+      path: "2215201_123456789.manifest"
+    }]);
     assert.equal(announcements.length, 1);
     assert.match(JSON.stringify(announcements[0]), /Charon Bot/);
   } finally {

@@ -1,6 +1,7 @@
 import { sendChannelMessage } from "./discord.js";
 import { publishManifestVaultFile, publishNewManifest } from "./publisher.js";
 import { fetchWithTimeout, joinUrl, truncate } from "./utils.js";
+import { readZipEntries } from "./zip.js";
 
 export const GAMES_ADDED_CHANNEL = "1508749560669933648";
 const DEFAULT_FALLBACK_MANIFEST_REPOSITORIES = "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main";
@@ -56,10 +57,11 @@ export async function autoPublishExternalPackage(env, appId, result, game = null
 
   try {
     const published = await publishNewManifest(env, appId, fileName, result.bytes, "Charon Bot");
+    const manifestBackfill = await publishBundledManifestsToVault(env, result.bytes);
     await sendChannelMessage(env, env.GAMES_ADDED_CHANNEL || GAMES_ADDED_CHANNEL, "", {
       embeds: [createAutoPublishedGameEmbed({ appId, fileName, game })]
     });
-    return { published: true, paths: published.paths };
+    return { published: true, paths: published.paths, manifestBackfill };
   } catch (error) {
     console.log(`[auto-publish] External package backfill skipped for AppID ${appId}: ${error.message}`);
     return { published: false, error: error.message };
@@ -79,6 +81,49 @@ function normalizeManifestFileName(fileName) {
     throw new Error(`Invalid manifest filename: ${fileName}`);
   }
   return clean;
+}
+
+async function publishBundledManifestsToVault(env, zipBytes) {
+  const uploaded = [];
+  const skipped = [];
+  const seen = new Set();
+
+  let entries = [];
+  try {
+    entries = readZipEntries(zipBytes);
+  } catch (error) {
+    console.log(`[auto-publish] ZIP manifest scan skipped: ${error.message}`);
+    return { uploaded, skipped, error: error.message };
+  }
+
+  for (const entry of entries) {
+    if (!/\.manifest$/i.test(entry.name || "")) continue;
+
+    let cleanFileName;
+    try {
+      cleanFileName = normalizeManifestFileName(entry.name);
+    } catch {
+      skipped.push({ fileName: entry.name, reason: "invalid-name" });
+      continue;
+    }
+
+    const key = cleanFileName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      const result = await publishManifestVaultFile(env, cleanFileName, entry.bytes, "External API ZIP");
+      if (result?.uploaded) {
+        uploaded.push({ fileName: cleanFileName, path: result.path });
+      } else {
+        skipped.push({ fileName: cleanFileName, reason: result?.reason || "not-uploaded" });
+      }
+    } catch (error) {
+      skipped.push({ fileName: cleanFileName, reason: error.message || "upload-failed" });
+    }
+  }
+
+  return { uploaded, skipped };
 }
 
 export async function autoPublishExternalManifest(env, fileName) {
