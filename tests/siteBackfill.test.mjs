@@ -65,3 +65,44 @@ test("site backfill endpoint publishes external API package through the bot", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("health endpoint reports GitHub and storage readiness", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/Charon-Database") {
+      return Response.json({ full_name: "BlissBlender/Charon-Database" });
+    }
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault") {
+      return Response.json({ full_name: "BlissBlender/ManifestVault" });
+    }
+    throw new Error(`Unexpected fetch: ${method} ${value}`);
+  };
+
+  try {
+    const response = await worker.fetch(new Request("https://charon-bot.test/health"), {
+      GITHUB_TOKEN: "token",
+      DISCORD_TOKEN: "discord-token",
+      BOT_STORAGE: {
+        idFromName: () => "global",
+        get: () => ({
+          fetch: async (_url, request) => {
+            const body = await request.json();
+            if (body.op === "get") return Response.json({ value: body.fallback });
+            return Response.json({ ok: true });
+          }
+        })
+      }
+    }, { waitUntil: () => null });
+
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.ok, true);
+    assert.equal(data.health.checks.charonDatabase, true);
+    assert.equal(data.health.checks.manifestVault, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -493,6 +493,52 @@ test("lookupPackage backfills fallback manifests into ManifestVault when request
   }
 });
 
+test("lookupPackage reads ManifestVault through GitHub API to avoid raw cache delay", async () => {
+  const originalFetch = globalThis.fetch;
+  const encoder = new TextEncoder();
+  const lua = encoder.encode('addappid(228980, 1, "abcdef123456")');
+  const manifestContent = btoa("api-manifest");
+  const seen = [];
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+    seen.push({ value, method });
+
+    if (method === "HEAD" && value.endsWith("/480.zip")) return new Response("", { status: 404 });
+    if (method === "HEAD" && value.endsWith("/480.lua")) return new Response("", { status: value.includes("database-1") ? 200 : 404 });
+    if (method === "GET" && value.endsWith("/480.lua")) return new Response(lua, { status: 200 });
+    if (method === "GET" && value === "https://api.steamcmd.net/v1/info/480") {
+      return Response.json({
+        status: "success",
+        data: { 480: { depots: { 228980: { manifests: { public: { gid: "111" } } } } } }
+      });
+    }
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault/contents/228980_111.manifest?ref=main") {
+      return Response.json({ content: manifestContent });
+    }
+    if (method === "GET" && value === "https://raw.githubusercontent.com/BlissBlender/ManifestVault/main/228980_111.manifest") {
+      return new Response("stale raw cache", { status: 404 });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: "",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/",
+      GITHUB_TOKEN: "token"
+    }, "480", { awaitBackfills: true });
+
+    assert.equal(result.manifestSource, "Manifest Vault");
+    assert.ok(seen.some((item) => item.value.includes("api.github.com/repos/BlissBlender/ManifestVault")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("lookupRepositoryPackage can check Charon repo without downloading bytes", async () => {
   const originalFetch = globalThis.fetch;
   const seen = [];

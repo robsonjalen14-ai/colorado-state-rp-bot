@@ -224,6 +224,48 @@ export async function publishManifestVaultFile(env, fileName, bytes, sourceLabel
   return { uploaded: true, path };
 }
 
+export async function readManifestVaultFile(env, fileName) {
+  const config = manifestVaultConfig(env);
+  const path = manifestVaultUploadPath(env, fileName);
+  const existing = await getFileWithConfig(config, path);
+  if (!existing) return null;
+  const bytes = await existingFileBytes(existing);
+  return bytes?.length ? { fileName, path, bytes, source: "primary", url: existing.download_url || "" } : null;
+}
+
+export async function healthCheck(env) {
+  const checks = {
+    githubToken: Boolean(env.GITHUB_TOKEN),
+    discordToken: Boolean(env.DISCORD_TOKEN),
+    botStorage: Boolean(env.BOT_STORAGE),
+    charonDatabase: false,
+    manifestVault: false
+  };
+
+  const errors = [];
+  try {
+    const config = githubConfig(env);
+    await githubRequestWithConfig(config, `/repos/${config.owner}/${config.repo}`);
+    checks.charonDatabase = true;
+  } catch (error) {
+    errors.push(`Charon database: ${error.message}`);
+  }
+
+  try {
+    const config = manifestVaultConfig(env);
+    await githubRequestWithConfig(config, `/repos/${config.owner}/${config.repo}`);
+    checks.manifestVault = true;
+  } catch (error) {
+    errors.push(`ManifestVault: ${error.message}`);
+  }
+
+  return {
+    ok: Object.values(checks).every(Boolean),
+    checks,
+    errors
+  };
+}
+
 export async function publishFixManifest(env, appId, fileName, bytes, uploadedBy) {
   return publishReplacingManifest(env, appId, fileName, bytes, uploadedBy, "Repair");
 }

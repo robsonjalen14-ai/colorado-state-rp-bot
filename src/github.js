@@ -1,5 +1,6 @@
 import { createFlatZipFromEntries, createLuaManifestZip, readZipEntries } from "./zip.js";
-import { publishManifestVaultFile } from "./publisher.js";
+import { enqueueManifestBackfill, recordMissingManifest } from "./backfillQueue.js";
+import { publishManifestVaultFile, readManifestVaultFile } from "./publisher.js";
 import { fetchJson, fetchWithTimeout, getConfiguredBasePaths, joinUrl } from "./utils.js";
 
 const STORE_DETAILS_URL = "https://store.steampowered.com/api/appdetails?appids=";
@@ -157,6 +158,20 @@ async function findManifestInRepositories(env, fileName, cache, options = {}) {
   if (cache.has(fileName)) return cache.get(fileName);
 
   for (const group of manifestRepositoryCandidates(env, fileName)) {
+    if (group.type === "primary" && env.GITHUB_TOKEN) {
+      try {
+        logManifestBundle(`Checking ManifestVault API for ${fileName}`);
+        const apiFile = await readManifestVaultFile(env, fileName);
+        if (apiFile) {
+          logManifestBundle(`Found manifest ${fileName} in primary via GitHub API.`);
+          cache.set(fileName, apiFile);
+          return apiFile;
+        }
+      } catch (error) {
+        logManifestBundle(`ManifestVault API check skipped for ${fileName}: ${error.message}`);
+      }
+    }
+
     const attempts = group.candidates.map(async (candidate) => {
       logManifestBundle(`Searching ${group.type} manifest source: ${candidate.url}`);
       try {
@@ -185,6 +200,13 @@ async function findManifestInRepositories(env, fileName, cache, options = {}) {
   }
 
   logManifestBundle(`Skipped missing manifest ${fileName}; no configured source had it.`);
+  const missingTask = recordMissingManifest(env, {
+    fileName,
+    appId: options.appId,
+    sources: manifestRepositoryCandidates(env, fileName).flatMap((group) => group.candidates.map((candidate) => candidate.url))
+  });
+  if (typeof options.waitUntil === "function") options.waitUntil(missingTask);
+  else if (options.awaitBackfills) await missingTask;
   cache.set(fileName, null);
   return null;
 }
@@ -228,7 +250,7 @@ async function downloadManifestFiles(env, fileNames, appId, options = {}) {
   const added = new Set();
 
   for (const fileName of fileNames) {
-    const found = await findManifestInRepositories(env, fileName, cache, options);
+    const found = await findManifestInRepositories(env, fileName, cache, { ...options, appId });
     if (!found || added.has(found.fileName)) continue;
     added.add(found.fileName);
     manifests.push(found);
@@ -314,7 +336,15 @@ function scheduleManifestVaultBackfill(env, manifest, options = {}) {
     })
     .catch((error) => {
       logManifestBundle(`ManifestVault backfill failed for ${manifest.fileName}: ${error.message}`);
-      return { uploaded: false, error: error.message };
+      return enqueueManifestBackfill(env, {
+        fileName: manifest.fileName,
+        url: manifest.url,
+        source: "External Vault"
+      }).then((queued) => ({
+        uploaded: false,
+        queued: queued?.queued || false,
+        error: error.message
+      }));
     });
 
   if (typeof options.waitUntil === "function") {

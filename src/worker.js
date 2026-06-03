@@ -27,7 +27,9 @@ import {
   websiteButton
 } from "./embeds.js";
 import { autoPublishExternalManifest, autoPublishExternalPackage } from "./autoPublish.js";
+import { backfillQueueStatus, processBackfillRetryQueue } from "./backfillQueue.js";
 import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
+import { healthCheck } from "./publisher.js";
 import {
   MANIFEST_JOB_COMMANDS,
   createMailEmbed,
@@ -1726,6 +1728,10 @@ async function processScheduled(env) {
     await discordApi(env, `/guilds/${entry.guildId}/members/${entry.userId}/roles/${entry.roleId}`, { method: "DELETE" }).catch(() => null);
   }
   await putStored(env, "temproles", remainingRoles);
+
+  await processBackfillRetryQueue(env).catch((error) =>
+    console.log(`[backfill-queue] scheduled retry failed: ${error.message}`)
+  );
 }
 
 const PUBLIC_COMMANDS = new Set([
@@ -1890,9 +1896,34 @@ async function handleSiteBackfill(request, env) {
   }
 }
 
+async function handleHealth(request, env) {
+  const headers = corsHeaders(env, request);
+  const [health, queue] = await Promise.all([
+    healthCheck(env).catch((error) => ({ ok: false, checks: {}, errors: [error.message] })),
+    backfillQueueStatus(env).catch((error) => ({ error: error.message }))
+  ]);
+  return jsonResponse({
+    ok: Boolean(health.ok),
+    service: "Charon Bot",
+    health,
+    queue,
+    time: new Date().toISOString()
+  }, health.ok ? 200 : 503, headers);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === "/health") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(env, request) });
+      }
+      if (request.method !== "GET") {
+        return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
+      }
+      return handleHealth(request, env);
+    }
+
     if (url.pathname === "/api/backfill") {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders(env, request) });
