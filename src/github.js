@@ -411,9 +411,6 @@ async function resolveExternalApi(env, appId) {
   const url = directUrl || keyedUrl;
   if (!url) return null;
 
-  const directZip = await downloadExternalZip(withQuery(url, "format", "zip"), appId);
-  if (directZip) return directZip;
-
   try {
     const data = await fetchJsonAny(url, 15000);
     if (data?.success === false) return null;
@@ -422,18 +419,13 @@ async function resolveExternalApi(env, appId) {
       data?.manifest?.downloadUrl ||
       data?.downloadUrl ||
       data?.download_url;
-    if (downloadUrl) {
-      const bytes = await downloadBytes(absoluteFromUrl(url, downloadUrl), 30000);
-      if (!isZipBytes(bytes)) return externalLinkResult(env, appId, "GameGen returned a non-ZIP response to the Worker.");
-      return {
-        source: "Used External API",
-        kind: "api",
-        fileName: `${appId}.zip`,
-        bytes
-      };
-    }
+    if (!downloadUrl) return null;
+
+    const result = await downloadExternalZip(absoluteFromUrl(url, downloadUrl), appId, { allowLink: true });
+    return result?.kind === "api" || result?.kind === "api-link" ? result : null;
   } catch {
-    return null;
+    const directZip = await downloadExternalZip(withQuery(url, "format", "zip"), appId, { allowLink: false }).catch(() => null);
+    if (directZip?.kind === "api") return directZip;
   }
 
   return null;
@@ -488,7 +480,7 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
   return null;
 }
 
-async function downloadExternalZip(url, appId) {
+async function downloadExternalZip(url, appId, options = {}) {
   const zipResponse = await fetchWithTimeout(url, {
     timeout: 30000,
     headers: {
@@ -508,6 +500,7 @@ async function downloadExternalZip(url, appId) {
     };
   }
   if (isVpnBlocked(bytes)) {
+    if (!options.allowLink) return null;
     return {
       source: "Used External API",
       kind: "api-link",

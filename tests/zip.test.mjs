@@ -571,7 +571,16 @@ test("lookupPackage returns external download link when Worker is blocked by Gam
 
   globalThis.fetch = async (url) => {
     const value = String(url);
-    if (value.includes("gamegen.lol")) {
+    if (value === "https://gamegen.lol/api/key/generate/2215200") {
+      return Response.json({
+        success: true,
+        manifest: {
+          appId: "2215200",
+          downloadUrl: "https://gamegen.lol/api/key/generate/2215200?format=zip"
+        }
+      });
+    }
+    if (value === "https://gamegen.lol/api/key/generate/2215200?format=zip") {
       return new Response(JSON.stringify({ error: "VPN_BLOCKED", redirect: "/vpn-blocked" }), {
         status: 403,
         headers: { "Content-Type": "application/json" }
@@ -592,6 +601,37 @@ test("lookupPackage returns external download link when Worker is blocked by Gam
     assert.equal(result.kind, "api-link");
     assert.equal(result.fileName, "2215200.zip");
     assert.equal(result.downloadUrl, "https://gamegen.lol/api/key/generate/2215200?format=zip");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("lookupPackage returns null when external API has no file instead of exposing invalid link", async () => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const value = String(url);
+    const method = options.method || "GET";
+
+    if (method === "HEAD") return new Response("", { status: 404 });
+    if (method === "GET" && value === "https://gamegen.lol/api/key/generate/4358690") {
+      return Response.json({ success: false, error: "No files found for AppID 4358690" });
+    }
+    if (method === "GET" && value === "https://gamegen.lol/api/key/generate/4358690?format=zip") {
+      return Response.json({ error: "No files found for AppID 4358690" }, { status: 404 });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  try {
+    const result = await lookupPackage({
+      DATABASE_1_URL: "https://raw.githubusercontent.com/example/database-1/",
+      DATABASE_2_URL: "https://raw.githubusercontent.com/example/database-2/",
+      DATABASE_BASE_PATHS: ",manifests",
+      GAMEGEN_API_URL: "https://gamegen.lol/api/key/generate/"
+    }, "4358690");
+
+    assert.equal(result, null);
   } finally {
     globalThis.fetch = originalFetch;
   }
