@@ -13,6 +13,7 @@ import {
   storageCall,
   truncate
 } from "./utils.js";
+import { getChannelSetting } from "./channelSettings.js";
 
 export const InteractionResponseType = {
   PONG: 1,
@@ -198,7 +199,10 @@ export async function editOriginalInteraction(env, interaction, content, file = 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (!response.ok) throw new Error(`Interaction edit failed: HTTP ${response.status}`);
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`Interaction edit failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+      }
       return response.json();
     }
 
@@ -208,10 +212,13 @@ export async function editOriginalInteraction(env, interaction, content, file = 
 
     const response = await fetchWithTimeout(url, {
       method: "PATCH",
-      timeout: 30000,
+      timeout: options.timeout ?? 60000,
       body: form
     });
-    if (!response.ok) throw new Error(`Interaction upload failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Interaction upload failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+    }
     return response.json();
   }
 
@@ -357,7 +364,7 @@ export async function storeAndSendModLog(env, entry) {
   logs.unshift(entry);
   await storageCall(env, "put", { key: "modlogs", value: logs.slice(0, 100) });
 
-  const channel = env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL;
+  const channel = await getChannelSetting(env, "log");
   if (channel) {
     await sendChannelMessage(env, channel, "", {
       embeds: [{

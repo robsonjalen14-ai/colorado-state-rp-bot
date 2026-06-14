@@ -1,4 +1,5 @@
 import { sendChannelMessage } from "./discord.js";
+import { getChannelSetting } from "./channelSettings.js";
 import { publishManifestVaultFile, publishNewManifest } from "./publisher.js";
 import { fetchWithTimeout, joinUrl, truncate } from "./utils.js";
 import { readZipEntries } from "./zip.js";
@@ -58,7 +59,7 @@ export async function autoPublishExternalPackage(env, appId, result, game = null
   try {
     const published = await publishNewManifest(env, appId, fileName, result.bytes, "Charon Bot");
     const manifestBackfill = await publishBundledManifestsToVault(env, result.bytes);
-    await sendChannelMessage(env, env.GAMES_ADDED_CHANNEL || GAMES_ADDED_CHANNEL, "", {
+    await sendChannelMessage(env, await getChannelSetting(env, "games") || GAMES_ADDED_CHANNEL, "", {
       embeds: [createAutoPublishedGameEmbed({ appId, fileName, game })]
     });
     return { published: true, paths: published.paths, manifestBackfill };

@@ -28,6 +28,7 @@ import {
 } from "./embeds.js";
 import { autoPublishExternalManifest, autoPublishExternalPackage } from "./autoPublish.js";
 import { backfillQueueStatus, processBackfillRetryQueue } from "./backfillQueue.js";
+import { CHANNEL_SETTING_TYPES, getChannelSetting, listChannelSettings, requireCommandChannel, setChannelSetting } from "./channelSettings.js";
 import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
 import { healthCheck } from "./publisher.js";
 import {
@@ -97,7 +98,7 @@ function corsHeaders(env, request) {
   const allowOrigin = origins.includes(origin) ? origin : origins[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
@@ -416,7 +417,7 @@ async function handleRequestCommand(env, interaction) {
   requests.unshift(requestEntry);
   await putStored(env, "requests", requests.slice(0, 100));
 
-  await sendChannelMessage(env, env.REQUEST_CHANNEL, "", {
+  await sendChannelMessage(env, await getChannelSetting(env, "request"), "", {
     embeds: [embed("New Game Request", [
       { name: "App ID", value: appId, inline: true },
       { name: "Requested By", value: `${user.username}\n${user.id}`, inline: true },
@@ -494,7 +495,8 @@ async function handleGenCommand(env, interaction, ctx = null) {
     bytes: result.bytes,
     contentType: "application/zip"
   }, {
-    embeds: [manifestEmbed]
+    embeds: [manifestEmbed],
+    timeout: 90000
   });
 }
 
@@ -575,6 +577,48 @@ async function handleAdminCommand(env, interaction) {
   throw new Error("Unknown admin subcommand.");
 }
 
+async function handleChannelCommand(env, interaction) {
+  if (!(await canUseModeratorCommands(env, interaction))) {
+    throw new Error("You do not have permission.");
+  }
+
+  const action = subcommandName(interaction);
+  if (action === "set") {
+    const target = String(commandOption(interaction, "target") || "").trim();
+    const channelId = String(commandOption(interaction, "channel") || "").trim();
+    if (!CHANNEL_SETTING_TYPES[target]) throw new Error("Unknown channel setting.");
+    const saved = await setChannelSetting(env, target, channelId);
+    await storeAdminLog(env, "CHANNEL SET", interactionUser(interaction), target, `Set to ${saved}`);
+    return {
+      embeds: [messageEmbed("Channel Updated", `${CHANNEL_SETTING_TYPES[target].label} set to <#${saved}>.`, SUCCESS)]
+    };
+  }
+
+  if (action === "list") {
+    const channels = await listChannelSettings(env);
+    return {
+      embeds: [embed("Charon Channels", channels.map((item) => ({
+        name: item.label,
+        value: item.channelId ? `<#${item.channelId}> (${item.channelId})` : "Not set",
+        inline: false
+      })), MOD)]
+    };
+  }
+
+  throw new Error("Unknown channel subcommand.");
+}
+
+async function enforceGenRequestFixChannel(env, interaction, commandName) {
+  try {
+    await requireCommandChannel(env, interaction, commandName);
+  } catch (error) {
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [messageEmbed("Wrong Channel", error.message, DANGER)]
+    });
+    throw error;
+  }
+}
+
 async function handleRequestsCommand(env, interaction) {
   await requireModerator(env, interaction);
   const requests = (await getStored(env, "requests", [])).slice(0, 10);
@@ -632,7 +676,7 @@ async function handleAnnouncement(env, interaction) {
   await requireModerator(env, interaction);
   const message = String(getOptionValue(interaction.data.options, "message", "")).trim();
   if (!message) throw new Error("Announcement message is required.");
-  await sendFormattedChannelMessage(env, env.REQUEST_CHANNEL, message, sendFormatOptions(interaction));
+  await sendFormattedChannelMessage(env, await getChannelSetting(env, "request"), message, sendFormatOptions(interaction));
   return "Announcement sent.";
 }
 
@@ -1325,7 +1369,7 @@ async function handleArchive(env, interaction) {
   const textContent = messages.map((message) =>
     `[${message.timestamp}] ${message.author?.username || "Unknown"} (${message.author?.id || ""}): ${message.content || ""}`
   ).join("\n");
-  await sendChannelMessage(env, env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL, "", {
+  await sendChannelMessage(env, await getChannelSetting(env, "log"), "", {
     embeds: [embed("Channel Archive", [
       { name: "Channel", value: `<#${interaction.channel_id}>`, inline: true },
       { name: "Messages", value: String(messages.length), inline: true },
@@ -1499,7 +1543,7 @@ async function handleSubmission(env, interaction, type) {
     report: "User Report",
     appeal: "Appeal"
   };
-  await sendChannelMessage(env, env.MOD_LOG_CHANNEL || env.REQUEST_CHANNEL, "", {
+  await sendChannelMessage(env, await getChannelSetting(env, "log"), "", {
     embeds: [embed(titles[type] || "Submission", [
       { name: "From", value: `<@${user.id}>\n${user.id}`, inline: true },
       { name: "Message", value: truncate(message, 1000), inline: false }
@@ -1607,6 +1651,7 @@ async function runCommand(env, interaction) {
     case "website": return { embeds: [createWebsiteEmbed()], components: websiteButton() };
     case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
+    case "channel": return handleChannelCommand(env, interaction);
     case "fix": return handleFixCommand(env, interaction);
     case "claim": return handleClaimCommand(env, interaction, false);
     case "unclaim": return handleClaimCommand(env, interaction, true);
@@ -1819,29 +1864,41 @@ export async function handleInteraction(request, env, ctx) {
   if (interaction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) return messageResponse("Unsupported interaction.");
 
   if (interaction.data.name === "request") {
-    ctx.waitUntil(handleManifestRequestCommand(env, interaction).catch((error) =>
-      editOriginalInteraction(env, interaction, "", null, {
+    ctx.waitUntil((async () => {
+      await enforceGenRequestFixChannel(env, interaction, "request");
+      await handleManifestRequestCommand(env, interaction);
+    })().catch((error) => {
+      if (/^Use `\/request`/.test(error.message || "")) return;
+      return editOriginalInteraction(env, interaction, "", null, {
         embeds: [messageEmbed("Request Failed", error.message || "Request failed.", DANGER)]
-      }).catch(console.error)
-    ));
+      }).catch(console.error);
+    }));
     return deferredResponse(true);
   }
 
   if (interaction.data.name === "gen") {
-    ctx.waitUntil(handleGenCommand(env, interaction, ctx).catch((error) =>
-      editOriginalInteraction(env, interaction, "", null, {
+    ctx.waitUntil((async () => {
+      await enforceGenRequestFixChannel(env, interaction, "gen");
+      await handleGenCommand(env, interaction, ctx);
+    })().catch((error) => {
+      if (/^Use `\/gen`/.test(error.message || "")) return;
+      return editOriginalInteraction(env, interaction, "", null, {
         embeds: [messageEmbed("Generation Failed", error.message || "Generation failed.", DANGER)]
-      }).catch(console.error)
-    ));
+      }).catch(console.error);
+    }));
     return deferredResponse(false);
   }
 
   if (interaction.data.name === "fix") {
-    ctx.waitUntil(handleFixCommand(env, interaction).catch((error) =>
-      editOriginalInteraction(env, interaction, "", null, {
+    ctx.waitUntil((async () => {
+      await enforceGenRequestFixChannel(env, interaction, "fix");
+      await handleFixCommand(env, interaction);
+    })().catch((error) => {
+      if (/^Use `\/fix`/.test(error.message || "")) return;
+      return editOriginalInteraction(env, interaction, "", null, {
         embeds: [messageEmbed("Repair Failed", error.message || "Repair request failed.", DANGER)]
-      }).catch(console.error)
-    ));
+      }).catch(console.error);
+    }));
     return deferredResponse(true);
   }
 

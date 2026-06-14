@@ -23,6 +23,7 @@ import {
   truncate,
   utcNow
 } from "./utils.js";
+import { getChannelSetting } from "./channelSettings.js";
 
 const TICKET_LOG_CHANNEL = "1485507520335446147";
 const TICKET_CATEGORY_ID = "1485507604049563718";
@@ -60,8 +61,8 @@ const TICKET_TYPES = {
   appeal: { label: "🧾 Appeal", slug: "appeal" }
 };
 
-function logChannel(env) {
-  return env.TICKET_LOG_CHANNEL || TICKET_LOG_CHANNEL;
+async function logChannel(env) {
+  return await getChannelSetting(env, "ticketlog") || TICKET_LOG_CHANNEL;
 }
 
 function categoryId(env) {
@@ -352,7 +353,7 @@ function subcommand(interaction) {
 }
 
 async function logTicket(env, title, fields, color = COLOR_SUPPORT) {
-  await sendChannelMessage(env, logChannel(env), "", {
+  await sendChannelMessage(env, await logChannel(env), "", {
     embeds: [ticketLogEmbed(title, fields, color)]
   }).catch(() => null);
 }
@@ -729,7 +730,7 @@ async function generateTranscript(env, ticket) {
   const html = transcriptHtml(ticket, messages);
   const filename = `transcript-${cleanChannelPart(ticket.type)}-${cleanChannelPart(ticket.username)}.html`;
   const bytes = new TextEncoder().encode(html);
-  await sendChannelFile(env, logChannel(env), "", {
+  await sendChannelFile(env, await logChannel(env), "", {
     filename,
     bytes,
     contentType: "text/html; charset=utf-8"

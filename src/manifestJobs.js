@@ -13,6 +13,7 @@ import {
   fetchGameDetails,
   lookupRepositoryPackage
 } from "./github.js";
+import { getChannelSetting } from "./channelSettings.js";
 import {
   countDatabaseFiles,
   publishFixManifest,
@@ -28,7 +29,6 @@ import {
 } from "./utils.js";
 
 const REQUEST_CHANNEL_FALLBACK = "1507608145021632542";
-const ANNOUNCE_CHANNEL = "1508749560669933648";
 const BLURPLE = 0x5865f2;
 const ORANGE = 0xf59e0b;
 const GREEN = 0x57f287;
@@ -64,8 +64,12 @@ export const MANIFEST_JOB_COMMANDS = new Set([
   "stats"
 ]);
 
-function requestChannel(env) {
-  return env.REQUEST_CHANNEL || REQUEST_CHANNEL_FALLBACK;
+async function requestChannel(env) {
+  return await getChannelSetting(env, "request") || REQUEST_CHANNEL_FALLBACK;
+}
+
+async function gamesAddedChannel(env) {
+  return await getChannelSetting(env, "games");
 }
 
 function actionRow(components) {
@@ -427,11 +431,12 @@ async function createJob(env, interaction, appId, type, game) {
     createdAt: utcNow(),
     updatedAt: utcNow()
   };
-  const sent = await sendChannelMessage(env, requestChannel(env), "", {
+  const targetChannel = await requestChannel(env);
+  const sent = await sendChannelMessage(env, targetChannel, "", {
     embeds: [baseJobEmbed(job, game)],
     components: uploadButton(job)
   });
-  job.channelId = requestChannel(env);
+  job.channelId = targetChannel;
   job.messageId = sent.id;
 
   const current = await jobs(env);
@@ -644,7 +649,7 @@ async function completeUploadFromBytes(env, interaction, job, fileName, bytes, u
     description: options.success?.description || "Your file has been published.",
     timestamp: new Date().toISOString()
   }]);
-  await sendChannelMessage(env, ANNOUNCE_CHANNEL, "", {
+  await sendChannelMessage(env, await gamesAddedChannel(env), "", {
     embeds: [announcementEmbed(updated, game)]
   });
   return updated;

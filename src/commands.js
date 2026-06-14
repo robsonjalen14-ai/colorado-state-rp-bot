@@ -49,6 +49,20 @@ const channelOption = {
   required: true
 };
 
+const channelTargetOption = {
+  name: "target",
+  description: "Which Charon channel setting to update",
+  type: TYPE.STRING,
+  required: true,
+  choices: [
+    { name: "Request/Fix messages", value: "request" },
+    { name: "Bot logs", value: "log" },
+    { name: "Gen/Request/Fix command-only channel", value: "gen" },
+    { name: "Games added announcements", value: "games" },
+    { name: "Ticket logs", value: "ticketlog" }
+  ]
+};
+
 const reasonOptional = {
   name: "reason",
   description: "Reason",
@@ -179,6 +193,14 @@ const RAW_COMMANDS = [
       sub("permissions", "Show admin permission model"),
       sub("logs", "Show recent admin actions"),
       sub("manifest", "Check whether an AppID exists in Charon or the external API", [appIdOption])
+    ]
+  },
+  {
+    name: "channel",
+    description: "Set Charon bot channels without editing source code",
+    options: [
+      sub("set", "Set a Charon channel", [channelTargetOption, channelOption]),
+      sub("list", "List configured Charon channels")
     ]
   },
   {

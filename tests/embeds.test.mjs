@@ -67,9 +67,19 @@ test("command registry stays within Discord global command limit", () => {
 
   assert.equal(duplicates.length, 0);
   assert.equal(COMMANDS.length <= 100, true);
-  for (const required of ["setticket", "ticket", "ping", "publish", "feedback", "appeal", "fix", "queue", "stats"]) {
+  for (const required of ["setticket", "ticket", "ping", "publish", "feedback", "appeal", "fix", "queue", "stats", "channel"]) {
     assert.equal(names.includes(required), true);
   }
+});
+
+test("channel command exposes runtime channel settings", () => {
+  const command = COMMANDS.find((item) => item.name === "channel");
+  assert.equal(Boolean(command), true);
+  const subcommands = command.options.map((item) => item.name);
+  assert.deepEqual(subcommands, ["set", "list"]);
+  const setCommand = command.options.find((item) => item.name === "set");
+  const target = setCommand.options.find((item) => item.name === "target");
+  assert.deepEqual(target.choices.map((choice) => choice.value), ["request", "log", "gen", "games", "ticketlog"]);
 });
 
 test("commands are registered open by default so runtime code controls permissions", () => {
