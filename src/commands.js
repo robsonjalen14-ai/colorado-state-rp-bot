@@ -689,6 +689,10 @@ const RAW_COMMANDS = [
     name: "status",
     description: "View live status for a request or fix",
     options: [appIdOption]
+  },
+  {
+    name: "refresh",
+    description: "Refresh Charon bot runtime state"
   }
 ];
 

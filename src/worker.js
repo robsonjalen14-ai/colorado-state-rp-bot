@@ -1690,6 +1690,24 @@ async function handleReset(env, interaction) {
   return `${area} reset.`;
 }
 
+async function handleRefresh(env, interaction) {
+  await requireModerator(env, interaction);
+  await storageCall(env, "delete", { key: "manifestChatUploadSessions" });
+  await processBackfillRetryQueue(env).catch(() => null);
+  const [health, queue] = await Promise.all([
+    healthCheck(env).catch((error) => ({ ok: false, errors: [error.message] })),
+    backfillQueueStatus(env).catch((error) => ({ error: error.message }))
+  ]);
+
+  return {
+    embeds: [embed("Bot Refreshed", [
+      { name: "Runtime", value: "Transient upload sessions cleared.", inline: false },
+      { name: "Health", value: health.ok ? "Online" : `Issue: ${(health.errors || []).join(", ") || "Unknown"}`, inline: true },
+      { name: "Backfill Queue", value: String(queue.queuedBackfills ?? 0), inline: true }
+    ], health.ok ? SUCCESS : DANGER)]
+  };
+}
+
 async function runCommand(env, interaction) {
   switch (interaction.data.name) {
     case "help": return { embeds: [helpEmbed()] };
@@ -1783,6 +1801,7 @@ async function runCommand(env, interaction) {
     case "settings": return handleSettings(env);
     case "config": return handleSettings(env);
     case "reset": return handleReset(env, interaction);
+    case "refresh": return handleRefresh(env, interaction);
     default: throw new Error("Unknown command.");
   }
 }
@@ -2027,6 +2046,13 @@ async function handleSteamSuggest(request, env) {
   return jsonResponse({ ok: true, suggestions }, 200, corsHeaders(env, request));
 }
 
+async function handleGameDetailsApi(request, env) {
+  const url = new URL(request.url);
+  const appId = normalizeAppId(url.searchParams.get("appid") || "");
+  const game = await fetchGameDetails(appId);
+  return jsonResponse({ ok: true, game }, 200, corsHeaders(env, request));
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -2048,6 +2074,20 @@ export default {
         return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
       }
       return handleSteamSuggest(request, env);
+    }
+
+    if (url.pathname === "/api/game-details") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(env, request) });
+      }
+      if (request.method !== "GET") {
+        return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
+      }
+      try {
+        return await handleGameDetailsApi(request, env);
+      } catch (error) {
+        return jsonResponse({ ok: false, error: error.message || "Game details unavailable." }, 400, corsHeaders(env, request));
+      }
     }
 
     if (url.pathname === "/api/backfill") {

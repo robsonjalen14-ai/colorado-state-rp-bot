@@ -29,6 +29,25 @@ export const FLAGS = {
   EPHEMERAL: 1 << 6
 };
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function discordRetryDelayMs(status, errorText, attempt) {
+  if (status === 429) {
+    try {
+      const parsed = JSON.parse(errorText || "{}");
+      const retryAfter = Number(parsed.retry_after);
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        return Math.min(5000, Math.ceil(retryAfter * 1000) + 150);
+      }
+    } catch {
+      // Fall through to exponential delay.
+    }
+  }
+  return Math.min(5000, 400 * (2 ** attempt));
+}
+
 function standardEmbed(content, color = 0x05fff7) {
   return {
     title: "Charon",
@@ -127,18 +146,23 @@ export async function discordApi(env, path, options = {}) {
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetchWithTimeout(`${DISCORD_API}${path}`, {
-    timeout: options.timeout ?? 15000,
-    method: options.method || "GET",
-    headers,
-    body: isFormData ? options.body : options.body ? JSON.stringify(options.body) : undefined
-  });
+  let response;
+  let errorText = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetchWithTimeout(`${DISCORD_API}${path}`, {
+      timeout: options.timeout ?? 15000,
+      method: options.method || "GET",
+      headers,
+      body: isFormData ? options.body : options.body ? JSON.stringify(options.body) : undefined
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`Discord API ${response.status}: ${truncate(errorText, 300)}`);
+    if (response.ok) break;
+    errorText = await response.text().catch(() => "");
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+    await sleep(discordRetryDelayMs(response.status, errorText, attempt));
   }
 
+  if (!response.ok) throw new Error(`Discord API ${response.status}: ${truncate(errorText, 300)}`);
   if (response.status === 204) return null;
   return response.json();
 }
@@ -201,7 +225,10 @@ export async function editOriginalInteraction(env, interaction, content, file = 
       });
       if (!response.ok) {
         const text = await response.text().catch(() => "");
-        throw new Error(`Interaction edit failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+        const error = new Error(`Interaction edit failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+        error.retryAfterMs = discordRetryDelayMs(response.status, text, 0);
+        error.retryable = [429, 500, 502, 503, 504].includes(response.status);
+        throw error;
       }
       return response.json();
     }
@@ -217,7 +244,10 @@ export async function editOriginalInteraction(env, interaction, content, file = 
     });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Interaction upload failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+      const error = new Error(`Interaction upload failed: HTTP ${response.status}${text ? ` ${truncate(text, 220)}` : ""}`);
+      error.retryAfterMs = discordRetryDelayMs(response.status, text, 0);
+      error.retryable = [429, 500, 502, 503, 504].includes(response.status);
+      throw error;
     }
     return response.json();
   }
@@ -225,6 +255,9 @@ export async function editOriginalInteraction(env, interaction, content, file = 
   try {
     return await upload();
   } catch (error) {
+    if (!file && !error.retryable) throw error;
+    if (error.retryable) await sleep(error.retryAfterMs || 500);
+    if (!file && error.retryable) return upload();
     if (!file) throw error;
     return upload();
   }
