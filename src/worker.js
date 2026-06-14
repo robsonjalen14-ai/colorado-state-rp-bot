@@ -279,6 +279,29 @@ function downloadButton(url) {
   }];
 }
 
+function genWebsiteUrl(appId) {
+  return `https://charon.vyro.workers.dev/charon-gen.html?appid=${encodeURIComponent(appId)}`;
+}
+
+function packageButtons(downloadUrl, appId) {
+  const components = [];
+  if (downloadUrl) {
+    components.push({
+      type: 2,
+      style: 5,
+      label: "Download ZIP",
+      url: downloadUrl
+    });
+  }
+  components.push({
+    type: 2,
+    style: 5,
+    label: "Open on Charon Gen",
+    url: genWebsiteUrl(appId)
+  });
+  return [{ type: 1, components }];
+}
+
 function byteCount(value) {
   return value?.byteLength ?? value?.length ?? 0;
 }
@@ -491,7 +514,7 @@ async function handleGenCommand(env, interaction, ctx = null) {
   if (result.downloadUrl && !result.bytes) {
     await editOriginalInteraction(env, interaction, "", null, {
       embeds: [manifestEmbed],
-      components: downloadButton(result.downloadUrl)
+      components: packageButtons(result.downloadUrl, appId)
     });
     return;
   }
@@ -501,7 +524,7 @@ async function handleGenCommand(env, interaction, ctx = null) {
   if (packageBytes > MAX_DIRECT_INTERACTION_UPLOAD_BYTES && directDownloadUrl) {
     await editOriginalInteraction(env, interaction, "", null, {
       embeds: [manifestEmbed],
-      components: downloadButton(directDownloadUrl)
+      components: packageButtons(directDownloadUrl, appId)
     });
     return;
   }
@@ -513,13 +536,14 @@ async function handleGenCommand(env, interaction, ctx = null) {
       contentType: "application/zip"
     }, {
       embeds: [manifestEmbed],
+      components: packageButtons(null, appId),
       timeout: 90000
     });
   } catch (error) {
     if (!directDownloadUrl) throw error;
     await editOriginalInteraction(env, interaction, "", null, {
       embeds: [manifestEmbed],
-      components: downloadButton(directDownloadUrl)
+      components: packageButtons(directDownloadUrl, appId)
     });
   }
 }
@@ -589,7 +613,7 @@ async function handleAdminCommand(env, interaction) {
     const appId = normalizeAppId(commandOption(interaction, "appid"));
     const [game, result] = await Promise.all([
       fetchGameDetails(appId),
-      lookupPackage(env, appId)
+      lookupPackage(env, appId, { includeBytes: false })
     ]);
 
     return {
