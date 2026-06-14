@@ -496,7 +496,8 @@ async function downloadExternalZip(url, appId, options = {}) {
       source: "Used External API",
       kind: "api",
       fileName: `${appId}.zip`,
-      bytes
+      bytes,
+      url
     };
   }
   if (isVpnBlocked(bytes)) {

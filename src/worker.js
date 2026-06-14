@@ -79,6 +79,8 @@ const INTERACTION_TYPE = {
   MODAL_SUBMIT: 5
 };
 
+const MAX_DIRECT_INTERACTION_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 const SUCCESS = 0x05fff7;
 const DANGER = 0xef4444;
 const MOD = 0x8b5cf6;
@@ -275,6 +277,10 @@ function downloadButton(url) {
       url
     }]
   }];
+}
+
+function byteCount(value) {
+  return value?.byteLength ?? value?.length ?? 0;
 }
 
 function helpEmbed() {
@@ -490,14 +496,32 @@ async function handleGenCommand(env, interaction, ctx = null) {
     return;
   }
 
-  await editOriginalInteraction(env, interaction, "", {
-    filename: result.fileName || `${appId}.zip`,
-    bytes: result.bytes,
-    contentType: "application/zip"
-  }, {
-    embeds: [manifestEmbed],
-    timeout: 90000
-  });
+  const packageBytes = byteCount(result.bytes);
+  const directDownloadUrl = result.downloadUrl || result.url;
+  if (packageBytes > MAX_DIRECT_INTERACTION_UPLOAD_BYTES && directDownloadUrl) {
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [manifestEmbed],
+      components: downloadButton(directDownloadUrl)
+    });
+    return;
+  }
+
+  try {
+    await editOriginalInteraction(env, interaction, "", {
+      filename: result.fileName || `${appId}.zip`,
+      bytes: result.bytes,
+      contentType: "application/zip"
+    }, {
+      embeds: [manifestEmbed],
+      timeout: 90000
+    });
+  } catch (error) {
+    if (!directDownloadUrl) throw error;
+    await editOriginalInteraction(env, interaction, "", null, {
+      embeds: [manifestEmbed],
+      components: downloadButton(directDownloadUrl)
+    });
+  }
 }
 
 async function handleAdminCommand(env, interaction) {
