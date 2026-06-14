@@ -79,7 +79,7 @@ const INTERACTION_TYPE = {
   MODAL_SUBMIT: 5
 };
 
-const MAX_DIRECT_INTERACTION_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_DIRECT_INTERACTION_UPLOAD_BYTES = 24 * 1024 * 1024;
 
 const SUCCESS = 0x05fff7;
 const DANGER = 0xef4444;
@@ -2016,6 +2016,17 @@ async function handleHealth(request, env) {
   }, health.ok ? 200 : 503, headers);
 }
 
+async function handleSteamSuggest(request, env) {
+  const url = new URL(request.url);
+  const term = String(url.searchParams.get("term") || "").trim();
+  if (!term || /^\d+$/.test(term)) {
+    return jsonResponse({ ok: true, suggestions: [] }, 200, corsHeaders(env, request));
+  }
+
+  const suggestions = await searchSteamSuggestions(term).catch(() => []);
+  return jsonResponse({ ok: true, suggestions }, 200, corsHeaders(env, request));
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -2027,6 +2038,16 @@ export default {
         return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
       }
       return handleHealth(request, env);
+    }
+
+    if (url.pathname === "/api/steam-suggest") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(env, request) });
+      }
+      if (request.method !== "GET") {
+        return jsonResponse({ ok: false, error: "Method not allowed." }, 405, corsHeaders(env, request));
+      }
+      return handleSteamSuggest(request, env);
     }
 
     if (url.pathname === "/api/backfill") {
