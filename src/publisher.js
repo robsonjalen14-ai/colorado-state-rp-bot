@@ -3,8 +3,8 @@ import { fetchWithTimeout, getConfiguredBasePaths, normalizeBasePath, truncate }
 const GITHUB_API = "https://api.github.com";
 
 function githubConfig(env) {
-  const owner = env.GITHUB_OWNER || "BlissBlender";
-  const repo = env.GITHUB_REPO || "Colorado-State-RP-Database";
+  const owner = env.GITHUB_OWNER || "robsonjalen14-ai";
+  const repo = env.GITHUB_REPO || "hat-database";
   const branch = env.GITHUB_BRANCH || "main";
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not configured.");
   return { owner, repo, branch, token: env.GITHUB_TOKEN };

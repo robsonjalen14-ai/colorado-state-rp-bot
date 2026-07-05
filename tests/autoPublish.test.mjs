@@ -17,10 +17,10 @@ test("autoPublishExternalPackage uploads external ZIP to both databases, backfil
     const value = String(url);
     const method = options.method || "GET";
 
-    if (method === "GET" && value.includes("/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
+    if (method === "GET" && value.includes("/repos/robsonjalen14-ai/hat-database/contents/database-")) {
       return new Response("not found", { status: 404 });
     }
-    if (method === "PUT" && value.includes("/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
+    if (method === "PUT" && value.includes("/repos/robsonjalen14-ai/hat-database/contents/database-")) {
       dbPuts.push({ url: value, body: JSON.parse(options.body) });
       return Response.json({ content: { path: value.split("/contents/")[1] } });
     }
