@@ -378,7 +378,7 @@ async function ensureTicketCategory(env, guildId) {
   const created = await discordApi(env, `/guilds/${guildId}/channels`, {
     method: "POST",
     body: {
-      name: "Charon Support",
+      name: "Colorado State RP Support",
       type: 4,
       permission_overwrites: [{ id: guildId, type: 0, allow: "0", deny: denyBits("everyone") }]
     }
@@ -717,7 +717,7 @@ function transcriptHtml(ticket, messages) {
 </head>
 <body>
   <main class="wrap">
-    <h1>Charon Ticket Transcript</h1>
+    <h1>Colorado State RP Ticket Transcript</h1>
     <div class="sub">${escapeHtml(ticket.id)} • ${escapeHtml(ticket.typeLabel)} • ${escapeHtml(ticket.channelId)}</div>
     ${rows || "<p>No messages found.</p>"}
   </main>

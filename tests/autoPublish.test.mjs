@@ -3,7 +3,7 @@ import test from "node:test";
 import { autoPublishExternalManifest, autoPublishExternalPackage } from "../src/autoPublish.js";
 import { createZip } from "../src/zip.js";
 
-test("autoPublishExternalPackage uploads external ZIP to both databases, backfills bundled manifests, and announces Charon Bot", async () => {
+test("autoPublishExternalPackage uploads external ZIP to both databases, backfills bundled manifests, and announces Colorado State RP Bot", async () => {
   const originalFetch = globalThis.fetch;
   const dbPuts = [];
   const vaultPuts = [];
@@ -17,10 +17,10 @@ test("autoPublishExternalPackage uploads external ZIP to both databases, backfil
     const value = String(url);
     const method = options.method || "GET";
 
-    if (method === "GET" && value.includes("/repos/BlissBlender/Charon-Database/contents/database-")) {
+    if (method === "GET" && value.includes("/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
       return new Response("not found", { status: 404 });
     }
-    if (method === "PUT" && value.includes("/repos/BlissBlender/Charon-Database/contents/database-")) {
+    if (method === "PUT" && value.includes("/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
       dbPuts.push({ url: value, body: JSON.parse(options.body) });
       return Response.json({ content: { path: value.split("/contents/")[1] } });
     }
@@ -69,7 +69,7 @@ test("autoPublishExternalPackage uploads external ZIP to both databases, backfil
       path: "2215201_123456789.manifest"
     }]);
     assert.equal(announcements.length, 1);
-    assert.match(JSON.stringify(announcements[0]), /Charon Bot/);
+    assert.match(JSON.stringify(announcements[0]), /Colorado State RP Bot/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -77,7 +77,7 @@ test("autoPublishExternalPackage uploads external ZIP to both databases, backfil
 
 test("autoPublishExternalPackage ignores non-external results", async () => {
   const result = await autoPublishExternalPackage({}, "480", {
-    source: "Used Charon Repo",
+    source: "Used Colorado State RP Repo",
     kind: "zip",
     fileName: "480.zip",
     bytes: new Uint8Array([1, 2, 3])

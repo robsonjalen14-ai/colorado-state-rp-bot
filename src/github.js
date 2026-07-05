@@ -248,15 +248,22 @@ async function downloadManifestFiles(env, fileNames, appId, options = {}) {
   const cache = new Map();
   const manifests = [];
   const added = new Set();
+  const uniqueFiles = [...new Set(fileNames)];
+  const batchSize = Number(options.manifestBatchSize || 48);
 
-  for (const fileName of fileNames) {
-    const found = await findManifestInRepositories(env, fileName, cache, { ...options, appId });
-    if (!found || added.has(found.fileName)) continue;
-    added.add(found.fileName);
-    manifests.push(found);
+  for (let index = 0; index < uniqueFiles.length; index += batchSize) {
+    const batch = uniqueFiles.slice(index, index + batchSize);
+    const results = await Promise.all(batch.map((fileName) =>
+      findManifestInRepositories(env, fileName, cache, { ...options, appId }).catch(() => null)
+    ));
+    for (const found of results) {
+      if (!found || added.has(found.fileName)) continue;
+      added.add(found.fileName);
+      manifests.push(found);
+    }
   }
 
-  logManifestBundle(`AppID ${appId}: bundled ${manifests.length}/${fileNames.length} missing optional manifest file(s).`);
+  logManifestBundle(`AppID ${appId}: bundled ${manifests.length}/${uniqueFiles.length} missing optional manifest file(s).`);
   return manifests;
 }
 
@@ -266,6 +273,11 @@ async function collectRequiredManifests(env, appId, luaBytes, options = {}) {
 
     if (!requiredFiles.length) {
       logManifestBundle(`No manifest identifiers detected for AppID ${appId}; returning Lua-only package.`);
+      return [];
+    }
+
+        if (requiredFiles.length > 20) {
+      logManifestBundle(`Manifest collection skipped for AppID ${appId}: too many manifests. Returning Lua-only package.`);
       return [];
     }
 
@@ -282,7 +294,7 @@ async function enrichZipWithMissingManifests(env, appId, zipBytes, options = {})
     const luaEntries = entries.filter((entry) => /\.lua$/i.test(entry.name));
     if (!luaEntries.length) {
       logManifestBundle(`Database ZIP for AppID ${appId} has no Lua files; returning original ZIP.`);
-      return { bytes: zipBytes, manifestSource: "" };
+            return { bytes: zipBytes, manifestSource: "", manifestCount: 0 };
     }
 
     const requiredFiles = await requiredManifestFileNamesForLuaEntries(appId, luaEntries);
@@ -292,15 +304,25 @@ async function enrichZipWithMissingManifests(env, appId, zipBytes, options = {})
         .map((entry) => entry.name.toLowerCase())
     );
     const missingFiles = requiredFiles.filter((fileName) => !existingManifests.has(fileName.toLowerCase()));
+    const existingCount = entries.filter((e) => /\.manifest$/i.test(e.name)).length;
+        if (missingFiles.length > 20) {
+      logManifestBundle(`ZIP enrichment skipped for AppID ${appId}: too many missing manifests. Returning original ZIP.`);
+      const existingCount = entries.filter((e) => /.manifest$/i.test(e.name)).length;
+      return { bytes: zipBytes, manifestSource: "", manifestCount: existingCount };
+    }
+
     const manifests = await downloadManifestFiles(env, missingFiles, appId, options);
 
     return {
       bytes: createFlatZipFromEntries(entries, manifests),
-      manifestSource: summarizeManifestSources(manifests)
+      manifestSource: summarizeManifestSources(manifests),
+      manifestCount: manifests.length + existingCount
     };
   } catch (error) {
     logManifestBundle(`Database ZIP enrichment skipped for AppID ${appId}: ${error.message}`);
-    return { bytes: zipBytes, manifestSource: "" };
+        let existingCount = 0;
+    try { const zipEntries = readZipEntries(zipBytes); existingCount = zipEntries.filter((e) => /.manifest$/i.test(e.name)).length; } catch (err) { logManifestBundle(`Failed to count existing manifests in fallback ZIP: ${err.message}`); }
+    return { bytes: zipBytes, manifestSource: "", manifestCount: existingCount };
   }
 }
 
@@ -438,8 +460,9 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
       const zipBytes = includeBytes ? await downloadBytes(candidate.url) : undefined;
       const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes, options) : null;
       return {
-        source: "Used Charon Repo",
+        source: "Used Colorado State RP Repo",
         manifestSource: enriched?.manifestSource || "",
+        manifestCount: enriched?.manifestCount || 0,
         kind: "zip",
         fileName: candidate.fileName,
         bytes: enriched?.bytes ?? zipBytes,
@@ -453,8 +476,9 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
       const luaBytes = includeBytes ? await downloadBytes(candidate.url) : null;
       const manifests = includeBytes ? await collectRequiredManifests(env, appId, luaBytes, options) : [];
       return {
-        source: "Used Charon Repo",
+        source: "Used Colorado State RP Repo",
         manifestSource: summarizeManifestSources(manifests),
+        manifestCount: manifests.length,
         kind: "lua",
         fileName: `${appId}.zip`,
         bytes: includeBytes ? createLuaManifestZip(appId, luaBytes, manifests) : undefined,
@@ -468,8 +492,9 @@ export async function lookupRepositoryPackage(env, appId, options = {}) {
     const zipBytes = includeBytes ? await downloadBytes(indexed.url) : undefined;
     const enriched = includeBytes ? await enrichZipWithMissingManifests(env, appId, zipBytes, options) : null;
     return {
-      source: "Used Charon Repo",
+      source: "Used Colorado State RP Repo",
       manifestSource: enriched?.manifestSource || "",
+        manifestCount: enriched?.manifestCount || 0,
       kind: "indexed-zip",
       fileName: indexed.fileName.endsWith(".zip") ? indexed.fileName : `${appId}.zip`,
       bytes: enriched?.bytes ?? zipBytes,
@@ -486,7 +511,7 @@ async function downloadExternalZip(url, appId, options = {}) {
     headers: {
       Accept: "application/zip, application/octet-stream, */*",
       "Cache-Control": "no-cache",
-      "User-Agent": "CharonBot/1.0"
+      "User-Agent": "ColoradoStateRPBot/1.0"
     },
     cf: { cacheTtl: 0 }
   });
@@ -495,6 +520,7 @@ async function downloadExternalZip(url, appId, options = {}) {
     return {
       source: "Used External API",
       kind: "api",
+      manifestCount: 0,
       fileName: `${appId}.zip`,
       bytes,
       url
@@ -693,11 +719,14 @@ export function parseSteamSuggestHtml(html) {
     const rawName = nameMatch ? nameMatch[1].replace(/<[^>]+>/g, " ") : "";
     const name = decodeHtml(rawName);
     if (!name) continue;
+    const imageMatch = block.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i);
     seen.add(appId);
-    choices.push({
+    const choice = {
       name: `${name} (${appId})`.slice(0, 100),
       value: appId
-    });
+    };
+    if (imageMatch) choice.image = decodeHtml(imageMatch[1]);
+    choices.push(choice);
     if (choices.length >= 25) break;
   }
 

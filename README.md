@@ -1,13 +1,13 @@
-# Charon Bot
+# Colorado State RP Bot
 
 Cloudflare Workers Discord bot using the Discord Interactions API only.
 
-No Discord Gateway, no websocket connection, and no external database.
+No Discord Gateway and no websocket connection. Cloudflare uses a Durable Object for storage; normal Node hosts use the lightweight local JSON storage adapter in `src/server.js`.
 
 ## Features
 
 - `/request appid:<number>` forwards requests to the configured request channel.
-- `/gen appid:<number>` searches the Charon database in order:
+- `/gen appid:<number>` searches the Colorado State RP database in order:
   1. Database 1
   2. Database 2
   3. GameGen external API, including direct ZIP fallback with `format=zip`
@@ -16,12 +16,15 @@ No Discord Gateway, no websocket connection, and no external database.
 - Supports optional `manifests/` path through `DATABASE_BASE_PATHS`.
 - Shows Steam game details in a single premium Discord embed with the game banner, source, AppID, publisher, release date, and a dynamic artwork-based accent color.
 - Shows a polished no-results embed with the `/request` follow-up when no package is available.
-- `/website` opens the official Charon website.
+- `/website` opens the official Colorado State RP website.
 - Tickety-style support tickets with `/setticket`, category selection, modal descriptions, private channels, claim/close/reopen/delete buttons, user picker add, transcripts, and ticket logs.
 - Ticket staff permissions use stored bot admins from `/admin add`; no Discord staff role is required.
 - `/gen appid` supports Steam game-name autocomplete while preserving numeric AppID generation.
-- `/request` checks Charon repositories before creating a request, then supports direct-URL upload and 60-second chat attachment upload publishing to both database folders.
+- Generation logs can be sent from Discord, the website, and the Colorado State RP app through the same genlog embed system.
+- `/channel set target:genlog channel:<channel>` sets the genlog channel without editing source code.
+- `/request` checks Colorado State RP repositories before creating a request, then supports direct-URL upload and 60-second chat attachment upload publishing to both database folders.
 - `/fix` creates repair jobs that replace existing AppID ZIP/LUA variants in both database folders.
+- Only bot admins/moderators can upload files into `/request` and `/fix` jobs.
 - Request/fix workflow supports queue, claim, unclaim, cancel, status, history, stats, polished upload logs, and game-added announcements.
 - Utility commands for pings, publishing, embeds, welcome config, self-role panels, mail, suggestions, reports, appeals, backups, and server/message tools.
 - Sends game requests and moderation logs as embeds to separate configured channels.
@@ -63,7 +66,7 @@ Paste a GitHub token with `repo` access for `GITHUB_TOKEN`; it is required for `
 - `TICKET_CATEGORY_ID`
 - database URLs
 - GameGen API URL
-- GitHub owner/repo/branch for Charon Database
+- GitHub owner/repo/branch for Colorado State RP Database
 - `CHAT_UPLOAD_MAX_BYTES` for the temporary chat upload size limit
 
 ## Register slash commands
@@ -105,6 +108,23 @@ After deploy, copy the Worker URL into Discord Developer Portal:
 Interactions Endpoint URL:
 https://your-worker.your-subdomain.workers.dev/
 ```
+
+## Generic Node hosting
+
+This bot also has a webhook-only Node adapter for hosts like Render.
+
+```bash
+npm install
+npm start
+```
+
+Set the same environment variables/secrets as the Worker deployment. The HTTP endpoint is the root path of your service, for example:
+
+```text
+https://your-service.onrender.com/
+```
+
+Use that URL as the Discord Interactions Endpoint URL. This still uses Discord Interactions over HTTP only; it does not connect to the Discord Gateway.
 
 ## Local development
 
@@ -149,6 +169,8 @@ Moderator:
 - `/admin permissions`
 - `/admin logs`
 - `/admin manifest appid:<number>`
+- `/channel set target:<request|log|gen|games|ticketlog|genlog> channel:<channel>`
+- `/channel list`
 - `/setticket`
 - `/ticket panel|claim|unclaim|close|reopen|rename|priority|move|transfer|transcript|notes|delete`
 - `/requests`

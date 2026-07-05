@@ -4,7 +4,7 @@ const GITHUB_API = "https://api.github.com";
 
 function githubConfig(env) {
   const owner = env.GITHUB_OWNER || "BlissBlender";
-  const repo = env.GITHUB_REPO || "Charon-Database";
+  const repo = env.GITHUB_REPO || "Colorado-State-RP-Database";
   const branch = env.GITHUB_BRANCH || "main";
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not configured.");
   return { owner, repo, branch, token: env.GITHUB_TOKEN };
@@ -61,7 +61,7 @@ async function githubRequestWithConfig(config, path, options = {}) {
       Authorization: `Bearer ${config.token}`,
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "CharonBot/1.0",
+      "User-Agent": "ColoradoStateRPBot/1.0",
       ...(options.headers || {})
     },
     body: options.body ? JSON.stringify(options.body) : undefined
@@ -238,7 +238,7 @@ export async function healthCheck(env) {
     githubToken: Boolean(env.GITHUB_TOKEN),
     discordToken: Boolean(env.DISCORD_TOKEN),
     botStorage: Boolean(env.BOT_STORAGE),
-    charonDatabase: false,
+    coloradoStateRpDatabase: false,
     manifestVault: false
   };
 
@@ -246,9 +246,9 @@ export async function healthCheck(env) {
   try {
     const config = githubConfig(env);
     await githubRequestWithConfig(config, `/repos/${config.owner}/${config.repo}`);
-    checks.charonDatabase = true;
+    checks.coloradoStateRpDatabase = true;
   } catch (error) {
-    errors.push(`Charon database: ${error.message}`);
+    errors.push(`Colorado State RP database: ${error.message}`);
   }
 
   try {

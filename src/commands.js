@@ -4,6 +4,7 @@ const DEFAULT_APPLICATION_ID = "947389898531430421";
 
 const TYPE = {
   SUB_COMMAND: 1,
+  SUB_COMMAND_GROUP: 2,
   STRING: 3,
   INTEGER: 4,
   BOOLEAN: 5,
@@ -51,7 +52,7 @@ const channelOption = {
 
 const channelTargetOption = {
   name: "target",
-  description: "Which Charon channel setting to update",
+  description: "Which Colorado State RP channel setting to update",
   type: TYPE.STRING,
   required: true,
   choices: [
@@ -59,8 +60,9 @@ const channelTargetOption = {
     { name: "Bot logs", value: "log" },
     { name: "Gen/Request/Fix command-only channel", value: "gen" },
     { name: "Games added announcements", value: "games" },
-    { name: "Ticket logs", value: "ticketlog" }
-  ]
+    { name: "Ticket logs", value: "ticketlog" },
+    { name: "Gen logs", value: "genlog" },
+    ]
 };
 
 const reasonOptional = {
@@ -135,6 +137,10 @@ function sub(name, description, options = []) {
   return { name, description, type: TYPE.SUB_COMMAND, options };
 }
 
+function group(name, description, options = []) {
+  return { name, description, type: TYPE.SUB_COMMAND_GROUP, options };
+}
+
 function textOption(name, description, required = true, maxLength = 1000) {
   return { name, description, type: TYPE.STRING, required, max_length: maxLength };
 }
@@ -142,12 +148,12 @@ function textOption(name, description, required = true, maxLength = 1000) {
 const RAW_COMMANDS = [
   {
     name: "request",
-    description: "Submit a Charon AppID request",
+    description: "Submit a Colorado State RP AppID request",
     options: [appIdOption]
   },
   {
     name: "gen",
-    description: "Generate a Charon ZIP for a Steam App ID",
+    description: "Generate a Colorado State RP ZIP for a Steam App ID",
     options: [genAppIdOption]
   },
   {
@@ -156,16 +162,28 @@ const RAW_COMMANDS = [
     options: [appIdOption]
   },
   {
+    name: "onlinefix",
+    description: "Find a direct OnlineFix repair archive by game name",
+    options: [{
+      name: "game",
+      description: "Game name to search",
+      type: TYPE.STRING,
+      required: true,
+      max_length: 120,
+      autocomplete: true
+    }]
+  },
+  {
     name: "website",
-    description: "Open the official Charon website"
+    description: "Open the official Colorado State RP website"
   },
   {
     name: "help",
-    description: "Show Charon bot command help"
+    description: "Show Colorado State RP bot command help"
   },
   {
     name: "botstatus",
-    description: "Show Charon bot health"
+    description: "Show Colorado State RP bot health"
   },
   {
     name: "ping",
@@ -184,23 +202,25 @@ const RAW_COMMANDS = [
   },
   {
     name: "admin",
-    description: "Charon bot administration",
+    description: "Colorado State RP bot administration",
     options: [
-      sub("add", "Add a stored moderator", [textOption("userid", "Discord user ID")]),
-      sub("remove", "Remove a stored moderator", [textOption("userid", "Discord user ID")]),
-      sub("list", "List stored moderators"),
-      sub("transfer", "Transfer bot admin ownership", [textOption("userid", "Discord user ID")]),
+      sub("role", "Set the admin role", [roleOption]),
+      sub("add", "Add a bot admin", [userOption, { name: "reason", description: "Reason for adding", type: 3, required: false }]),
+      sub("remove", "Remove a bot admin", [userOption]),
+      sub("list", "List bot admins"),
+      sub("transfer", "Transfer bot admin ownership", [userOption]),
       sub("permissions", "Show admin permission model"),
       sub("logs", "Show recent admin actions"),
-      sub("manifest", "Check whether an AppID exists in Charon or the external API", [appIdOption])
+      sub("manifest", "Check whether an AppID exists in Colorado State RP or the external API", [appIdOption]),
+      sub("genadd", "Add extra daily generation uses for a user", [userOption, textOption("count", "Number of extra generations to add")])
     ]
   },
   {
     name: "channel",
-    description: "Set Charon bot channels without editing source code",
+    description: "Set Colorado State RP bot channels without editing source code",
     options: [
-      sub("set", "Set a Charon channel", [channelTargetOption, channelOption]),
-      sub("list", "List configured Charon channels")
+      sub("set", "Set a Colorado State RP channel", [channelTargetOption, channelOption]),
+      sub("list", "List configured Colorado State RP channels")
     ]
   },
   {
@@ -381,47 +401,7 @@ const RAW_COMMANDS = [
       sub("show", "Show sticky config for this channel")
     ]
   },
-  {
-    name: "automod",
-    description: "Manage stored automod config",
-    options: [
-      sub("enable", "Enable automod"),
-      sub("disable", "Disable automod"),
-      sub("config", "Show automod config")
-    ]
-  },
-  ...["antispam", "antilink", "antiinvite", "antiscam", "antiraid", "antiemoji", "antimention", "antibot"].map((name) => ({
-    name,
-    description: `Configure ${name}`,
-    options: [modeOption]
-  })),
-  {
-    name: "wordfilter",
-    description: "Manage filtered words",
-    options: [
-      sub("add", "Add a filtered word", [textOption("word", "Word or phrase", true, 100)]),
-      sub("remove", "Remove a filtered word", [textOption("word", "Word or phrase", true, 100)]),
-      sub("list", "List filtered words")
-    ]
-  },
-  {
-    name: "whitelist",
-    description: "Manage whitelist entries",
-    options: [
-      sub("add", "Add an entry", [textOption("target", "Role/user/channel ID or pattern", true, 100)]),
-      sub("remove", "Remove an entry", [textOption("target", "Role/user/channel ID or pattern", true, 100)]),
-      sub("list", "List entries")
-    ]
-  },
-  {
-    name: "blacklist",
-    description: "Manage blacklist entries",
-    options: [
-      sub("add", "Add an entry", [textOption("target", "Role/user/channel ID or pattern", true, 100)]),
-      sub("remove", "Remove an entry", [textOption("target", "Role/user/channel ID or pattern", true, 100)]),
-      sub("list", "List entries")
-    ]
-  },
+
   {
     name: "role",
     description: "Manage roles",
@@ -662,7 +642,7 @@ const RAW_COMMANDS = [
   },
   {
     name: "stats",
-    description: "View Charon request and manifest statistics"
+    description: "View Colorado State RP request and manifest statistics"
   },
   {
     name: "search",
@@ -683,7 +663,7 @@ const RAW_COMMANDS = [
   {
     name: "reset",
     description: "Reset a stored config area",
-    options: [textOption("area", "welcome, automod, roleconfig, sticky", true, 50)]
+    options: [textOption("area", "welcome, roleconfig, sticky", true, 50)]
   },
   {
     name: "status",
@@ -692,7 +672,7 @@ const RAW_COMMANDS = [
   },
   {
     name: "refresh",
-    description: "Refresh Charon bot runtime state"
+    description: "Refresh Colorado State RP bot runtime state"
   }
 ];
 

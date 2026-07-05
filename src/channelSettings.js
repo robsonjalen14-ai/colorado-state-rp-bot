@@ -31,6 +31,12 @@ export const CHANNEL_SETTING_TYPES = {
     label: "Ticket Log Channel",
     env: "TICKET_LOG_CHANNEL",
     fallback: "1485507520335446147"
+  },
+  genlog: {
+    key: "channel.genlog",
+    label: "Gen Log Channel",
+    env: "GEN_LOG_CHANNEL",
+    fallback: ""
   }
 };
 

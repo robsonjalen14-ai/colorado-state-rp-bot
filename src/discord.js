@@ -50,11 +50,11 @@ function discordRetryDelayMs(status, errorText, attempt) {
 
 function standardEmbed(content, color = 0x05fff7) {
   return {
-    title: "Charon",
+    title: "Colorado State RP",
     description: truncate(content || "Done.", 4000),
     color,
     timestamp: new Date().toISOString(),
-    footer: { text: "Charon Bot" }
+    footer: { text: "Colorado State RP Bot" }
   };
 }
 
@@ -409,7 +409,7 @@ export async function storeAndSendModLog(env, entry) {
           { name: "Reason", value: truncate(entry.reason || "Not provided", 1000), inline: false },
           { name: "Time", value: entry.time, inline: false }
         ],
-        footer: { text: "Charon Mod Logs" }
+        footer: { text: "Colorado State RP Mod Logs" }
       }]
     });
   }

@@ -56,7 +56,7 @@ test("createFlatZipFromEntries preserves existing manifests and adds only missin
   assert.equal(new TextDecoder().decode(existing.bytes), "existing");
 });
 
-test("lua parser extracts CharonManifestInstall depot ids and direct manifest names", () => {
+test("lua parser extracts ColoradoStateRPManifestInstall depot ids and direct manifest names", () => {
   const lua = `
     addappid(228980, 1, "abcdef123456")
     addappid(228980, 1, "abcdef123456")
@@ -78,7 +78,7 @@ test("buildGameGenGenerateUrl appends AppID when URL ends at generate", () => {
   );
 });
 
-test("lookupPackage falls back to external API zip when Charon repo misses", async () => {
+test("lookupPackage falls back to external API zip when Colorado State RP repo misses", async () => {
   const originalFetch = globalThis.fetch;
   const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
   const seen = [];
@@ -165,7 +165,7 @@ test("lookupPackage bundles required manifests when loose lua is generated", asy
 
     const text = new TextDecoder().decode(result.bytes);
     assert.equal(result.kind, "lua");
-    assert.equal(result.source, "Used Charon Repo");
+    assert.equal(result.source, "Used Colorado State RP Repo");
     assert.equal(result.manifestSource, "Manifest Vault");
     assert.match(text, /480\.lua/);
     assert.match(text, /228980_111\.manifest/);
@@ -539,7 +539,7 @@ test("lookupPackage reads ManifestVault through GitHub API to avoid raw cache de
   }
 });
 
-test("lookupRepositoryPackage can check Charon repo without downloading bytes", async () => {
+test("lookupRepositoryPackage can check Colorado State RP repo without downloading bytes", async () => {
   const originalFetch = globalThis.fetch;
   const seen = [];
 

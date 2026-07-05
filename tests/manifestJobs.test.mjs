@@ -21,7 +21,7 @@ test("parseSteamSuggestHtml extracts game names and app IDs", () => {
   ]);
 });
 
-test("databaseUploadPaths targets both Charon database folders", () => {
+test("databaseUploadPaths targets both Colorado State RP database folders", () => {
   assert.deepEqual(
     databaseUploadPaths({ DATABASE_BASE_PATHS: ",manifests" }, "123.lua"),
     ["database-1/123.lua", "database-2/123.lua"]

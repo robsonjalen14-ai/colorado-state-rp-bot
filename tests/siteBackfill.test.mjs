@@ -14,10 +14,10 @@ test("site backfill endpoint publishes external API package through the bot", as
 
     if (method === "HEAD" && value.includes("raw.githubusercontent.com/example")) return new Response("", { status: 404 });
     if (method === "GET" && value.includes("gamegen.lol")) return new Response(zip, { status: 200 });
-    if (method === "GET" && value.includes("api.github.com/repos/BlissBlender/Charon-Database/contents/database-")) {
+    if (method === "GET" && value.includes("api.github.com/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
       return new Response("not found", { status: 404 });
     }
-    if (method === "PUT" && value.includes("api.github.com/repos/BlissBlender/Charon-Database/contents/database-")) {
+    if (method === "PUT" && value.includes("api.github.com/repos/BlissBlender/Colorado-State-RP-Database/contents/database-")) {
       puts.push(value);
       return Response.json({ ok: true });
     }
@@ -39,11 +39,11 @@ test("site backfill endpoint publishes external API package through the bot", as
   };
 
   try {
-    const response = await worker.fetch(new Request("https://charon-bot.test/api/backfill", {
+    const response = await worker.fetch(new Request("https://colorado-state-rp-bot.test/api/backfill", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Origin: "https://charon.vyro.workers.dev"
+        Origin: "https://colorado-state-rp.vyro.workers.dev"
       },
       body: JSON.stringify({ type: "external-package", appId: "480" })
     }), {
@@ -72,8 +72,8 @@ test("health endpoint reports GitHub and storage readiness", async () => {
   globalThis.fetch = async (url, options = {}) => {
     const value = String(url);
     const method = options.method || "GET";
-    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/Charon-Database") {
-      return Response.json({ full_name: "BlissBlender/Charon-Database" });
+    if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/Colorado-State-RP-Database") {
+      return Response.json({ full_name: "BlissBlender/Colorado-State-RP-Database" });
     }
     if (method === "GET" && value === "https://api.github.com/repos/BlissBlender/ManifestVault") {
       return Response.json({ full_name: "BlissBlender/ManifestVault" });
@@ -82,7 +82,7 @@ test("health endpoint reports GitHub and storage readiness", async () => {
   };
 
   try {
-    const response = await worker.fetch(new Request("https://charon-bot.test/health"), {
+    const response = await worker.fetch(new Request("https://colorado-state-rp-bot.test/health"), {
       GITHUB_TOKEN: "token",
       DISCORD_TOKEN: "discord-token",
       BOT_STORAGE: {
@@ -100,7 +100,7 @@ test("health endpoint reports GitHub and storage readiness", async () => {
     const data = await response.json();
     assert.equal(response.status, 200);
     assert.equal(data.ok, true);
-    assert.equal(data.health.checks.charonDatabase, true);
+    assert.equal(data.health.checks.coloradoStateRpDatabase, true);
     assert.equal(data.health.checks.manifestVault, true);
   } finally {
     globalThis.fetch = originalFetch;

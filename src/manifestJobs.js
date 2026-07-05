@@ -3,6 +3,7 @@ import {
   deferredResponse,
   editOriginalInteraction,
   interactionUser,
+  canUseModeratorCommands,
   isStoredModerator,
   messageResponse,
   modalResponse,
@@ -207,8 +208,7 @@ async function latestJobForApp(env, appId) {
 }
 
 async function requireBotAdmin(env, interaction) {
-  const user = interactionUser(interaction);
-  if (!(await isStoredModerator(env, user.id))) {
+  if (!(await canUseModeratorCommands(env, interaction))) {
     throw new Error("You do not have permission.");
   }
 }
@@ -219,8 +219,8 @@ function baseJobEmbed(job, game, options = {}) {
     color: options.color ?? (isFix ? ORANGE : BLURPLE),
     title: options.title ?? (isFix ? "🛠 Manifest Repair Request" : "📥 New Manifest Request"),
     description: options.description ?? (isFix
-      ? "A repair request has been submitted.\n\nThis operation may update or replace manifests inside Charon repositories."
-      : "A new request has entered the Charon queue."),
+      ? "A repair request has been submitted.\n\nThis operation may update or replace manifests inside Colorado State RP repositories."
+      : "A new request has entered the Colorado State RP queue."),
     fields: [
       field(isFix ? "🆔 App ID" : "Requested App ID", `\`${job.appId}\``, true),
       field("Job ID", `\`${job.id}\``, true),
@@ -240,7 +240,7 @@ function alreadyAvailableEmbed(appId, game) {
   return gameThumb({
     color: ORANGE,
     title: "📦 Manifest Already Available",
-    description: "Charon checked both repositories and found existing manifest files for this App ID.",
+    description: "Colorado State RP checked both repositories and found existing manifest files for this App ID.",
     fields: [
       field("App ID", `\`${appId}\``, true),
       field("Next Action", `If the existing manifest is outdated, broken, or needs replacing:\n\n\`/fix appid:${appId}\``, false)
@@ -309,7 +309,7 @@ function announcementEmbed(job, game) {
     color: isFix ? ORANGE : GREEN,
     title: hasMetadata ? (isFix ? "🛠 GAME FIX PUBLISHED" : "🎮 NEW GAME ADDED") : (isFix ? "🛠 Manifest Updated" : "🎮 New Manifest Added"),
     description: hasMetadata
-      ? (isFix ? "A manifest repair has been published to Charon." : "A new manifest has been published to Charon.")
+      ? (isFix ? "A manifest repair has been published to Colorado State RP." : "A new manifest has been published to Colorado State RP.")
       : undefined,
     fields: hasMetadata ? [
       field("🎯 Game", game.name, true),
@@ -326,7 +326,7 @@ function announcementEmbed(job, game) {
       field("File", `\`${job.fileName}\``, true),
       field("Uploader", userMention(job.uploadedBy), true)
     ],
-    footer: { text: isFix ? "Powered by Charon Repair System" : "Powered by Charon" },
+    footer: { text: isFix ? "Powered by Colorado State RP Repair System" : "Powered by Colorado State RP" },
     timestamp: new Date().toISOString()
   };
   return largeGameImage(embed, game);
@@ -484,8 +484,8 @@ export async function handleManifestRequestCommand(env, interaction) {
     embeds: [{
       color: GREEN,
       title: "✅ Request Created",
-      description: "Your request has been submitted.\n\nOnce someone uploads a valid manifest,\nCharon will publish automatically.",
-      footer: { text: "Charon Request System" },
+      description: "Your request has been submitted.\n\nOnce someone uploads a valid manifest,\nColorado State RP will publish automatically.",
+      footer: { text: "Colorado State RP Request System" },
       timestamp: new Date().toISOString()
     }]
   });
@@ -499,8 +499,13 @@ export async function handleFixCommand(env, interaction) {
     embeds: [{
       color: ORANGE,
       title: "🛠 Repair Request Submitted",
-      description: "Upload the corrected manifest.",
-      footer: { text: "Charon Repair System" },
+      description: [
+        `🎮 **${game?.name || `Steam App ${appId}`}**`,
+        `🆔 AppID: ${appId}`,
+        "",
+        "Upload the corrected manifest."
+      ].join("\n"),
+      footer: { text: "Colorado State RP Repair System" },
       timestamp: new Date().toISOString()
     }]
   });
@@ -535,6 +540,11 @@ export async function handleManifestJobComponent(env, interaction, ctx) {
   const jobId = customId.split(":")[1];
   const job = await findJob(env, jobId);
   if (!job) return messageResponse("Request was not found.", true);
+  try {
+    await requireBotAdmin(env, interaction);
+  } catch {
+    return messageResponse("Only bot admins can upload files for requests and fixes.", true);
+  }
   if (job.status === "COMPLETED" || job.uploaded) {
     return messageResponse("", true, { embeds: [alreadyCompletedEmbed(job.type === "fix")] });
   }
@@ -545,6 +555,7 @@ export async function handleManifestJobComponent(env, interaction, ctx) {
 }
 
 export async function handleManifestJobModal(env, interaction, ctx) {
+  await requireBotAdmin(env, interaction);
   const jobId = (interaction.data.custom_id || "").split(":")[1];
   const url = interaction.data.components?.[0]?.components?.[0]?.value || "";
   ctx.waitUntil(processUpload(env, interaction, jobId, url));
@@ -869,7 +880,7 @@ export async function handleManifestStatusCommand(env, interaction) {
         field("⬆ Uploaded By", job.uploadedBy ? userMention(job.uploadedBy) : "Waiting", true),
         field("🕒 Updated", timestamp(job.updatedAt || job.createdAt), true)
       ],
-      footer: { text: "Charon Status" },
+      footer: { text: "Colorado State RP Status" },
       timestamp: new Date().toISOString()
     }, game)]
   };
@@ -893,7 +904,7 @@ export async function handleManifestHistoryCommand(env, interaction) {
           : "No history found.", false),
         field("Last Updated", relevant[0] ? timestamp(relevant[0].time) : "Never", true)
       ],
-      footer: { text: "Charon History" },
+      footer: { text: "Colorado State RP History" },
       timestamp: new Date().toISOString()
     }, game)]
   };
@@ -994,7 +1005,7 @@ export async function handleStatsCommand(env) {
   return {
     embeds: [{
       color: BLURPLE,
-      title: "📊 Charon Stats",
+      title: "📊 Colorado State RP Stats",
       fields: [
         field("Games", String(Math.max(databaseCounts["database-1"] || 0, databaseCounts["database-2"] || 0)), true),
         field("Requests", String(currentJobs.filter((job) => job.type === "request").length), true),
@@ -1004,7 +1015,7 @@ export async function handleStatsCommand(env) {
         field("Database 2", String(databaseCounts["database-2"] || 0), true),
         field("Published Today", String(currentHistory.filter((item) => item.status === "COMPLETED" && String(item.time).startsWith(today)).length), true)
       ],
-      footer: { text: "Charon Statistics" },
+      footer: { text: "Colorado State RP Statistics" },
       timestamp: new Date().toISOString()
     }]
   };
@@ -1021,7 +1032,7 @@ export function createMailEmbed({ subject, message, sender }) {
       field("━━━━━━━━━━━━━━━━━━\n👤 Sent By", sender, true),
       field("━━━━━━━━━━━━━━━━━━\n🕒 Sent At", absoluteTimestamp(), true)
     ],
-    footer: { text: "Powered by Charon Mail System" },
+    footer: { text: "Powered by Colorado State RP Mail System" },
     timestamp: new Date().toISOString()
   };
 }
@@ -1029,7 +1040,7 @@ export function createMailEmbed({ subject, message, sender }) {
 export function mailComponents(options = {}) {
   const row = [];
   if (options.website) {
-    row.push({ type: COMPONENT.BUTTON, style: 5, label: "Website", emoji: { name: "🌐" }, url: "https://charon.vyro.workers.dev/" });
+    row.push({ type: COMPONENT.BUTTON, style: 5, label: "Website", emoji: { name: "🌐" }, url: "https://colorado-state-rp.vyro.workers.dev/" });
   }
   if (options.generate && options.appId) {
     row.push(button(`mail_generate:${options.appId}`, "Generate", BUTTON.PRIMARY, "📦"));

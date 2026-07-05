@@ -16,6 +16,7 @@ import {
   requireGuild,
   requireModerator,
   sendChannelMessage,
+  sendInteractionFollowup,
   storeAndSendModLog,
   verifyDiscordRequest
 } from "./discord.js";
@@ -23,6 +24,7 @@ import {
   createManifestEmbed,
   createNoResultsEmbed,
   createWebsiteEmbed,
+  createGenLogEmbed,
   extractImageAccentColor,
   websiteButton
 } from "./embeds.js";
@@ -31,6 +33,7 @@ import { backfillQueueStatus, processBackfillRetryQueue } from "./backfillQueue.
 import { CHANNEL_SETTING_TYPES, getChannelSetting, listChannelSettings, requireCommandChannel, setChannelSetting } from "./channelSettings.js";
 import { fetchGameDetails, lookupPackage, searchSteamSuggestions } from "./github.js";
 import { healthCheck } from "./publisher.js";
+import { findOnlineFix, onlineFixEmbed, onlineFixNotFoundEmbed } from "./onlineFix.js";
 import {
   MANIFEST_JOB_COMMANDS,
   createMailEmbed,
@@ -59,7 +62,18 @@ import {
   isTicketModal
 } from "./tickets.js";
 import {
+  handleAdminRoleSet,
+  handleAdminAdd,
+  handleAdminRemove,
+  handleAdminList,
+  handleAdminTransfer,
+  handleAdminLogs,
+  handleAdminPermissions,
+  handleAdminAutocomplete
+} from "./admin.js";
+import {
   PERMISSIONS,
+  getOption,
   getOptionValue,
   getSubcommand,
   normalizeAppId,
@@ -79,15 +93,15 @@ const INTERACTION_TYPE = {
   MODAL_SUBMIT: 5
 };
 
-const MAX_DIRECT_INTERACTION_UPLOAD_BYTES = 24 * 1024 * 1024;
+const MAX_DIRECT_INTERACTION_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 const SUCCESS = 0x05fff7;
 const DANGER = 0xef4444;
 const MOD = 0x8b5cf6;
 const SITE_BACKFILL_ORIGINS = [
-  "https://charon.vyro.workers.dev",
-  "https://charon.co.in",
-  "https://www.charon.co.in"
+  "https://colorado-state-rp.vyro.workers.dev",
+  "https://colorado-state-rp.co.in",
+  "https://www.colorado-state-rp.co.in"
 ];
 
 function corsHeaders(env, request) {
@@ -224,7 +238,7 @@ function embed(title, fields = [], color = SUCCESS) {
     color,
     fields,
     timestamp: new Date().toISOString(),
-    footer: { text: "Charon Bot" }
+    footer: { text: "Colorado State RP Bot" }
   };
 }
 
@@ -234,7 +248,7 @@ function messageEmbed(title, description, color = SUCCESS) {
     description: truncate(description || "Done.", 4000),
     color,
     timestamp: new Date().toISOString(),
-    footer: { text: "Charon Bot" }
+    footer: { text: "Colorado State RP Bot" }
   };
 }
 
@@ -257,7 +271,7 @@ function gameEmbed(game, source = null) {
     title: game.name || `Steam App ${game.appId}`,
     color: SUCCESS,
     fields,
-    footer: { text: "Charon Manifest Tool" }
+    footer: { text: "Colorado State RP Manifest Tool" }
   };
 
   if (game.banner) {
@@ -280,7 +294,7 @@ function downloadButton(url) {
 }
 
 function genWebsiteUrl(appId) {
-  return `https://charon.vyro.workers.dev/charon-gen.html?appid=${encodeURIComponent(appId)}`;
+  return `https://colorado-state-rp.vyro.workers.dev/colorado-state-rp-gen?appid=${encodeURIComponent(appId)}`;
 }
 
 function packageButtons(downloadUrl, appId) {
@@ -296,7 +310,7 @@ function packageButtons(downloadUrl, appId) {
   components.push({
     type: 2,
     style: 5,
-    label: "Open on Charon Gen",
+    label: "Open on Colorado State RP Gen",
     url: genWebsiteUrl(appId)
   });
   return [{ type: 1, components }];
@@ -306,11 +320,18 @@ function byteCount(value) {
   return value?.byteLength ?? value?.length ?? 0;
 }
 
+function stablePackageDownloadUrl(result) {
+  if (result?.downloadUrl) return result.downloadUrl;
+  if (!result?.url) return "";
+  if (["zip", "indexed-zip", "api", "api-link"].includes(result.kind)) return result.url;
+  return "";
+}
+
 function helpEmbed() {
-  return embed("Charon Help", [
+  return embed("Colorado State RP Help", [
     {
       name: "Manifest Tools",
-      value: "`/gen appid` - Generate/download ZIP\n`/request appid` - Request a game\n`/website` - Open the Charon website\n`/admin manifest appid` - Check source availability",
+      value: "`/gen appid` - Generate/download ZIP\n`/request appid` - Request a game\n`/website` - Open the Colorado State RP website\n`/admin manifest appid` - Check source availability",
       inline: false
     },
     {
@@ -329,7 +350,7 @@ function helpEmbed() {
 async function botStatusEmbed(env) {
   const tickets = await getStored(env, "tickets", []);
   const moderators = await getStored(env, "moderators", []);
-  return embed("Charon Bot Status", [
+  return embed("Colorado State RP Bot Status", [
     { name: "Runtime", value: "Cloudflare Workers", inline: true },
     { name: "Mode", value: "Serverless Interactions", inline: true },
     { name: "Storage", value: "Durable Object", inline: true },
@@ -350,13 +371,13 @@ function pingEmbed(interaction) {
 
 async function sendResult(env, interaction, result) {
   if (typeof result === "string") {
-    await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [messageEmbed("Charon", result)]
+    await sendInteractionFollowup(env, interaction, "", {
+      embeds: [messageEmbed("Colorado State RP", result)]
     });
     return;
   }
   const embeds = [...(result.embeds || [])];
-  if (result.content) embeds.unshift(messageEmbed("Charon", result.content));
+  if (result.content) embeds.unshift(messageEmbed("Colorado State RP", result.content));
   await editOriginalInteraction(env, interaction, "", result.file || null, {
     embeds,
     components: result.components || []
@@ -423,7 +444,7 @@ async function dmUser(env, userId, title, fields = [], color = MOD) {
 
 async function notifyUserAction(env, interaction, target, action, reason = "Not provided", fields = []) {
   const userId = typeof target === "string" ? target : target.userId;
-  await dmUser(env, userId, `Charon Notice: ${action}`, [
+  await dmUser(env, userId, `Colorado State RP Notice: ${action}`, [
     { name: "Server", value: interaction.guild_id || "Unknown", inline: false },
     { name: "Action", value: action, inline: true },
     { name: "Reason", value: truncate(reason || "Not provided", 1000), inline: false },
@@ -443,6 +464,13 @@ async function handleRequestCommand(env, interaction) {
   };
 
   const requests = await getStored(env, "requests", []);
+
+  // Check for duplicate request by same user
+  const existing = requests.find((r) => r.appid === appId && r.userId === user.id);
+  if (existing) {
+    throw new Error(`AppID ${appId} has already been requested. Check <#${await getChannelSetting(env, "request")}>.`);
+  }
+
   requests.unshift(requestEntry);
   await putStored(env, "requests", requests.slice(0, 100));
 
@@ -479,12 +507,72 @@ async function handlePoll(env, interaction) {
   return "Poll created.";
 }
 
+// Daily generation limit helpers
+const DAILY_GEN_LIMIT = 15;
+
+function todayDateStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+async function getGenLimitData(env, userId) {
+  try {
+    const stored = await getStored(env, `genlimit:${userId}`, null);
+    if (!stored) {
+      return { remaining: DAILY_GEN_LIMIT, date: todayDateStr() };
+    }
+    // Parse stored JSON
+    const data = typeof stored === "string" ? JSON.parse(stored) : stored;
+    const today = todayDateStr();
+    // If it's a new day, reset
+    if (data.date !== today) {
+      return { remaining: DAILY_GEN_LIMIT, date: today };
+    }
+    return data;
+  } catch {
+    return { remaining: DAILY_GEN_LIMIT, date: todayDateStr() };
+  }
+}
+
+async function setGenLimitData(env, userId, data) {
+  await putStored(env, `genlimit:${userId}`, JSON.stringify(data));
+}
+
+async function decrementGenLimit(env, userId) {
+  const data = await getGenLimitData(env, userId);
+  if (data.remaining <= 0) return { remaining: 0, blocked: true };
+  data.remaining = Math.max(0, data.remaining - 1);
+  data.date = todayDateStr();
+  await setGenLimitData(env, userId, data);
+  return { remaining: data.remaining, blocked: false };
+}
+
+async function addGenLimit(env, userId, count) {
+  const data = await getGenLimitData(env, userId);
+  data.remaining = (data.remaining || 0) + count;
+  data.date = todayDateStr();
+  await setGenLimitData(env, userId, data);
+  return data.remaining;
+}
+
 async function handleGenCommand(env, interaction, ctx = null) {
   const startedAt = Date.now();
   const appId = normalizeAppId(getOptionValue(interaction.data.options, "appid"));
   await editOriginalInteraction(env, interaction, "", null, {
-    embeds: [messageEmbed("Generating", `Preparing manifest package for AppID **${appId}**...`, MOD)]
+    embeds: [messageEmbed("🔍 Searching Colorado State RP Repository...", "Please wait while the requested manifest package is located and verified.", MOD)],
   });
+
+  // Check daily gen limit
+  const userId = interactionUser(interaction)?.id;
+  if (userId) {
+    const limitData = await getGenLimitData(env, userId);
+    if (limitData.remaining <= 0) {
+      await sendInteractionFollowup(env, interaction, "", {
+        embeds: [messageEmbed("⌛ Daily Generation Limit Reached", "You have used all your daily generations. Please wait until tomorrow for a refill.", DANGER)]
+      });
+      return;
+    }
+  }
 
   const [game, result] = await Promise.all([
     fetchGameDetails(appId),
@@ -505,12 +593,69 @@ async function handleGenCommand(env, interaction, ctx = null) {
     game,
     source: result.source,
     manifestSource: result.manifestSource,
+    manifestCount: result.manifestCount || 0,
     elapsedMs: Date.now() - startedAt,
     accentColor
   });
 
-  ctx?.waitUntil?.(autoPublishExternalPackage(env, appId, result, game));
+  // Decrement daily gen limit and notify user
+  if (userId) {
+    try {
+      const updated = await decrementGenLimit(env, userId);
+      if (!updated.blocked) {
+        await sendInteractionFollowup(env, interaction, "", {
+          embeds: [messageEmbed("", "⏱️ You have " + updated.remaining + " generations remaining today.", MOD)]
+        });
+      }
+    } catch (limitErr) {
+      console.log("[genlimit] Error: " + limitErr.message);
+    }
+  }
 
+  // Send genlog to genlog channel if configured
+  const genlog = async () => {
+    try {
+      const genlogChannel = await getChannelSetting(env, "genlog");
+      if (!genlogChannel) return;
+      
+      const user = interactionUser(interaction);
+      const userMention = user ? `<@${user.id}>` : "Unknown";
+      
+      if (result.source === "Used Colorado State RP Repo") {
+        await sendChannelMessage(env, genlogChannel, "", {
+          embeds: [createGenLogEmbed({
+            game,
+            source: result.source,
+            manifestSource: result.manifestSource,
+            manifestCount: result.manifestCount || 0,
+            fileSize: result.fileSize || "",
+            elapsedMs: Date.now() - startedAt,
+            user: userMention,
+            backfillStatus: `✅ Already in Database`,
+            genType: "discord"
+          })]
+        });
+      } else {
+        // Genlog will be sent by autoPublishExternalPackage
+      }
+    } catch (genlogErr) {
+      console.log(`[genlog] Error: ${genlogErr.message}`);
+    }
+  };
+  
+  ctx?.waitUntil?.(autoPublishExternalPackage(env, appId, result, game, {
+    env,
+    game,
+    source: result.source,
+    manifestSource: result.manifestSource,
+    manifestCount: result.manifestCount || 0,
+    fileSize: result.fileSize || "",
+    elapsedMs: Date.now() - startedAt,
+    user: (interactionUser(interaction) ? `<@${interactionUser(interaction).id}>` : "Unknown"),
+    genType: "discord"
+  }));
+  ctx?.waitUntil?.(genlog());
+  
   if (result.downloadUrl && !result.bytes) {
     await editOriginalInteraction(env, interaction, "", null, {
       embeds: [manifestEmbed],
@@ -520,11 +665,15 @@ async function handleGenCommand(env, interaction, ctx = null) {
   }
 
   const packageBytes = byteCount(result.bytes);
-  const directDownloadUrl = result.downloadUrl || result.url;
-  if (packageBytes > MAX_DIRECT_INTERACTION_UPLOAD_BYTES && directDownloadUrl) {
+  const directDownloadUrl = stablePackageDownloadUrl(result);
+  if (packageBytes > MAX_DIRECT_INTERACTION_UPLOAD_BYTES) {
     await editOriginalInteraction(env, interaction, "", null, {
-      embeds: [manifestEmbed],
-      components: packageButtons(directDownloadUrl, appId)
+      embeds: [messageEmbed(
+        "Package Too Large",
+        `Colorado State RP found the package for AppID **${appId}**, but the generated ZIP is ${(packageBytes / 1024 / 1024).toFixed(1)} MB after bundling manifests. Open it in Colorado State RP Gen to generate and download it from the website.`,
+        MOD
+      )],
+      components: packageButtons(null, appId)
     });
     return;
   }
@@ -548,81 +697,57 @@ async function handleGenCommand(env, interaction, ctx = null) {
   }
 }
 
+async function handleOnlineFixCommand(env, interaction) {
+  const gameName = String(commandOption(interaction, "game", "")).trim();
+  if (!gameName) throw new Error("Enter a game name.");
+
+  const result = await findOnlineFix(env, gameName);
+  if (!result) {
+    return { embeds: [onlineFixNotFoundEmbed(gameName)] };
+  }
+
+  return {
+    embeds: [onlineFixEmbed(gameName, result)]
+  };
+}
+
 async function handleAdminCommand(env, interaction) {
-  await requireModerator(env, interaction);
-  const action = subcommandName(interaction);
-  const moderators = await getStored(env, "moderators", []);
-
-  if (action === "add") {
-    const userId = normalizeUserId(commandOption(interaction, "userid"));
-    if (!moderators.includes(userId)) {
-      moderators.push(userId);
-      await putStored(env, "moderators", moderators);
-    }
-    await storeAdminLog(env, "ADMIN ADD", interactionUser(interaction), userId);
-    await notifyUserAction(env, interaction, userId, "Admin Access Granted", "You were added as a Charon bot admin.");
-    return "Moderator added.";
+  var sub = subcommandName(interaction);
+  // Handle subcommand groups
+  var subOption = (interaction.data.options || []).find(function(o) { return o.type === 2; });
+  if (subOption) {
+    var subSub = (subOption.options || []).find(function(o) { return o.type === 1; });
+    if (subSub) sub = subOption.name + '_' + subSub.name;
   }
-
-  if (action === "remove") {
-    const userId = normalizeUserId(commandOption(interaction, "userid"));
-    await putStored(env, "moderators", moderators.filter((id) => id !== userId));
-    await storeAdminLog(env, "ADMIN REMOVE", interactionUser(interaction), userId);
-    await notifyUserAction(env, interaction, userId, "Admin Access Removed", "You were removed from Charon bot admins.");
-    return "Moderator removed.";
-  }
-
-  if (action === "list") {
-    return moderators.length
-      ? `Moderators:\n${moderators.map((id) => `- <@${id}> (${id})`).join("\n")}`
-      : "Moderators:\nNone";
-  }
-
-  if (action === "transfer") {
-    const userId = normalizeUserId(commandOption(interaction, "userid"));
-    const nextModerators = [...new Set([...moderators, userId])];
-    await putStored(env, "moderators", nextModerators);
-    await putStored(env, "adminOwner", userId);
-    await storeAdminLog(env, "ADMIN TRANSFER", interactionUser(interaction), userId, "Ownership transferred");
-    await notifyUserAction(env, interaction, userId, "Admin Ownership Transferred", "You were made Charon bot owner/admin.");
-    return "Admin ownership transferred.";
-  }
-
-  if (action === "permissions") {
-    return {
-      embeds: [embed("Admin Permissions", [
-        { name: "Bot Admin Source", value: "`/admin add` stored users", inline: false },
-        { name: "Ticket Staff", value: "Only stored bot admins can claim, add users, reopen, delete, and export ticket transcripts.", inline: false },
-        { name: "Server Managers", value: "Manage Server can run setup/admin commands, but ticket staff access comes from `/admin add`.", inline: false }
-      ], MOD)]
-    };
-  }
-
-  if (action === "logs") {
-    const logs = (await getStored(env, "adminlogs", [])).slice(0, 10);
-    return {
-      embeds: [embed("Admin Logs", logs.length ? logs.map((log) => ({
-        name: `${log.action} - ${log.time}`,
-        value: `Actor: ${log.actor?.username || log.actor?.id}\nTarget: ${log.target}\nReason: ${log.reason}`,
-        inline: false
-      })) : [{ name: "No logs", value: "No admin actions stored yet.", inline: false }], MOD)]
-    };
-  }
-
-  if (action === "manifest") {
-    const appId = normalizeAppId(commandOption(interaction, "appid"));
-    const [game, result] = await Promise.all([
+  if (sub === 'role') return handleAdminRoleSet(env, interaction);
+  if (sub === 'add') return handleAdminAdd(env, interaction);
+  if (sub === 'remove') return handleAdminRemove(env, interaction);
+  if (sub === 'list') return handleAdminList(env, interaction);
+  if (sub === 'transfer') return handleAdminTransfer(env, interaction);
+  if (sub === 'logs') return handleAdminLogs(env, interaction);
+  if (sub === 'permissions') return handleAdminPermissions(env, interaction);
+  if (sub === 'manifest') {
+    var appId = getOptionValue(commandOptions(interaction), 'appid');
+    if (!appId) throw new Error('AppID is required.');
+    var [game, result] = await Promise.all([
       fetchGameDetails(appId),
       lookupPackage(env, appId, { includeBytes: false })
     ]);
-
     return {
       content: result ? `Manifest found for AppID ${appId}.` : `No manifest found for AppID ${appId}.`,
       embeds: [gameEmbed(game, result?.source || "Not found")]
     };
   }
-
-  throw new Error("Unknown admin subcommand.");
+  if (sub === 'genadd') {
+    var rawTargetUser = getOptionValue(commandOptions(interaction), 'user');
+    var count = parseInt(getOptionValue(commandOptions(interaction), 'count'), 10) || 1;
+    var targetId = rawTargetUser ? String(rawTargetUser).replace(/[<@!>]/g, '').trim() : null;
+    if (!targetId) throw new Error('User is required.');
+    var newRemaining = await addGenLimit(env, targetId, count);
+    await storeAndSendModLog(env, { action: 'Gen Limit Added', moderator: interactionUser(interaction), target: targetId, reason: '+' + count + ' generations' });
+    return sendInteractionFollowup(env, interaction, 'Added ' + count + ' generations to <@' + targetId + '>. New remaining: ' + newRemaining);
+  }
+  throw new Error('Unknown admin subcommand: ' + sub);
 }
 
 async function handleChannelCommand(env, interaction) {
@@ -645,7 +770,7 @@ async function handleChannelCommand(env, interaction) {
   if (action === "list") {
     const channels = await listChannelSettings(env);
     return {
-      embeds: [embed("Charon Channels", channels.map((item) => ({
+      embeds: [embed("Colorado State RP Channels", channels.map((item) => ({
         name: item.label,
         value: item.channelId ? `<#${item.channelId}> (${item.channelId})` : "Not set",
         inline: false
@@ -704,7 +829,7 @@ async function sendFormattedChannelMessage(env, channel, message, options = {}) 
       description: truncate(message, 4000),
       color: MOD,
       timestamp: new Date().toISOString(),
-      footer: { text: "Charon Bot" }
+      footer: { text: "Colorado State RP Bot" }
     };
     if (options.title) messageEmbedPayload.title = truncate(options.title, 200);
     if (options.image) messageEmbedPayload.image = { url: options.image };
@@ -906,7 +1031,7 @@ async function handleClearWarns(env, interaction) {
   const warnings = await warningsData(env);
   delete warnings[target.userId];
   await putStored(env, "warnings", warnings);
-  await notifyUserAction(env, interaction, target, "Warnings Cleared", "Your Charon warnings were cleared.");
+  await notifyUserAction(env, interaction, target, "Warnings Cleared", "Your Colorado State RP warnings were cleared.");
   await logAction(env, interaction, "CLEAR WARNS", userLabel(target), "Warnings cleared");
   return "Warnings cleared.";
 }
@@ -1028,7 +1153,7 @@ async function handleNuke(env, interaction) {
       permission_overwrites: channel.permission_overwrites || []
     }
   });
-  await sendChannelMessage(env, created.id, "Channel nuked and recreated by Charon.");
+  await sendChannelMessage(env, created.id, "Channel nuked and recreated by Colorado State RP.");
   await discordApi(env, `/channels/${interaction.channel_id}`, { method: "DELETE" });
   await logAction(env, interaction, "NUKE", channel.name, `New channel ${created.id}`);
   return `Channel recreated: <#${created.id}>`;
@@ -1082,48 +1207,6 @@ async function handleSticky(env, interaction) {
   return sticky[interaction.channel_id]
     ? `Sticky: ${sticky[interaction.channel_id].message}`
     : "No sticky message configured for this channel.";
-}
-
-async function handleAutomod(env, interaction) {
-  await requireModerator(env, interaction);
-  assertCommandPermission(interaction, PERMISSIONS.MANAGE_GUILD);
-  const action = subcommandName(interaction);
-  const config = await getStored(env, "automod", { enabled: false, features: {}, wordfilter: [], whitelist: [], blacklist: [] });
-  if (action === "enable") config.enabled = true;
-  if (action === "disable") config.enabled = false;
-  await putStored(env, "automod", config);
-  return {
-    embeds: [embed("Automod Config", [
-      { name: "Enabled", value: String(config.enabled), inline: true },
-      { name: "Features", value: Object.keys(config.features || {}).length ? Object.entries(config.features).map(([k, v]) => `${k}: ${v}`).join("\n") : "None", inline: false }
-    ], MOD)]
-  };
-}
-
-async function handleAutomodFeature(env, interaction) {
-  await requireModerator(env, interaction);
-  assertCommandPermission(interaction, PERMISSIONS.MANAGE_GUILD);
-  const feature = interaction.data.name;
-  const mode = String(getOptionValue(interaction.data.options, "mode", "status"));
-  const config = await getStored(env, "automod", { enabled: false, features: {}, wordfilter: [], whitelist: [], blacklist: [] });
-  config.features ||= {};
-  if (mode === "enable") config.features[feature] = true;
-  if (mode === "disable") config.features[feature] = false;
-  await putStored(env, "automod", config);
-  return `${feature}: ${config.features[feature] ? "enabled" : "disabled"}`;
-}
-
-async function handleListConfig(env, interaction, key, optionName) {
-  await requireModerator(env, interaction);
-  assertCommandPermission(interaction, PERMISSIONS.MANAGE_GUILD);
-  const action = subcommandName(interaction);
-  const config = await getStored(env, "automod", { enabled: false, features: {}, wordfilter: [], whitelist: [], blacklist: [] });
-  config[key] ||= [];
-  const value = String(commandOption(interaction, optionName, "")).trim();
-  if (action === "add" && value && !config[key].includes(value)) config[key].push(value);
-  if (action === "remove") config[key] = config[key].filter((item) => item !== value);
-  await putStored(env, "automod", config);
-  return `${key}:\n${config[key].length ? config[key].map((item) => `- ${item}`).join("\n") : "None"}`;
 }
 
 async function handleRole(env, interaction) {
@@ -1336,7 +1419,7 @@ async function handleAvatar(interaction) {
       title: `${user.username}'s Avatar`,
       color: MOD,
       image: { url },
-      footer: { text: "Charon Bot" }
+      footer: { text: "Colorado State RP Bot" }
     }]
   };
 }
@@ -1352,7 +1435,7 @@ async function handleBanner(env, interaction) {
       title: `${user.username}'s Banner`,
       color: MOD,
       image: { url },
-      footer: { text: "Charon Bot" }
+      footer: { text: "Colorado State RP Bot" }
     }]
   };
 }
@@ -1404,7 +1487,7 @@ async function handleQuote(env, interaction) {
         { name: "Author", value: `${message.author?.username || "Unknown"}\n${message.author?.id || ""}`, inline: true },
         { name: "Sent", value: message.timestamp || "Unknown", inline: true }
       ],
-      footer: { text: "Charon Bot" },
+      footer: { text: "Colorado State RP Bot" },
       timestamp: new Date().toISOString()
     }]
   };
@@ -1454,7 +1537,7 @@ async function handleMail(env, interaction) {
   const user = interactionUser(interaction);
 
   if (action === "send" || action === "channel") {
-    const subject = String(commandOption(interaction, "subject", "Charon Mail")).trim();
+    const subject = String(commandOption(interaction, "subject", "Colorado State RP Mail")).trim();
     const message = String(commandOption(interaction, "message", "")).trim();
     const appId = String(commandOption(interaction, "appid", "") || "");
     const components = mailComponents({
@@ -1506,7 +1589,7 @@ async function handleMail(env, interaction) {
   return {
     embeds: [embed("Inbox", inbox.length ? inbox.slice(0, 10).map((item) => ({
       name: `${item.id} - ${item.time}`,
-      value: `From: <@${item.from}>\nSubject: ${item.subject || "Charon Mail"}\n${truncate(item.message, 800)}`,
+      value: `From: <@${item.from}>\nSubject: ${item.subject || "Colorado State RP Mail"}\n${truncate(item.message, 800)}`,
       inline: false
     })) : [{ name: "Empty", value: "No mail yet.", inline: false }], MOD)]
   };
@@ -1611,7 +1694,7 @@ async function handleBackup(env, interaction) {
       by: interactionUser(interaction).id,
       moderators: await getStored(env, "moderators", []),
       welcome: await getStored(env, "welcome", {}),
-      automod: await getStored(env, "automod", {}),
+
       roleconfig: await getStored(env, "roleconfig", {}),
       selfroles: await getStored(env, "selfroles", [])
     };
@@ -1625,7 +1708,7 @@ async function handleBackup(env, interaction) {
     if (!backup) throw new Error("Backup not found.");
     await putStored(env, "moderators", backup.moderators || []);
     await putStored(env, "welcome", backup.welcome || {});
-    await putStored(env, "automod", backup.automod || {});
+
     await putStored(env, "roleconfig", backup.roleconfig || {});
     await putStored(env, "selfroles", backup.selfroles || []);
     return "Backup restored.";
@@ -1663,10 +1746,10 @@ async function handleSearch(env, interaction) {
 }
 
 async function handleSettings(env) {
-  const [moderators, welcome, automod, roleconfig, tickets] = await Promise.all([
+  const [moderators, welcome, roleconfig, tickets] = await Promise.all([
     getStored(env, "moderators", []),
     getStored(env, "welcome", {}),
-    getStored(env, "automod", {}),
+
     getStored(env, "roleconfig", {}),
     getStored(env, "tickets", [])
   ]);
@@ -1674,7 +1757,6 @@ async function handleSettings(env) {
     embeds: [embed("Settings", [
       { name: "Admins", value: String(Array.isArray(moderators) ? moderators.length : 0), inline: true },
       { name: "Welcome", value: welcome.channelId ? `<#${welcome.channelId}>` : "Disabled", inline: true },
-      { name: "Automod", value: automod.enabled ? "Enabled" : "Disabled", inline: true },
       { name: "Autorole", value: roleconfig.autorole ? `<@&${roleconfig.autorole}>` : "None", inline: true },
       { name: "Tickets", value: String(Array.isArray(tickets) ? tickets.length : 0), inline: true }
     ], MOD)]
@@ -1684,8 +1766,8 @@ async function handleSettings(env) {
 async function handleReset(env, interaction) {
   await requireModerator(env, interaction);
   const area = String(getOptionValue(interaction.data.options, "area", "")).trim().toLowerCase();
-  const allowed = new Set(["welcome", "automod", "roleconfig", "sticky"]);
-  if (!allowed.has(area)) throw new Error("Area must be one of: welcome, automod, roleconfig, sticky.");
+  const allowed = new Set(["welcome", "roleconfig", "sticky"]);
+  if (!allowed.has(area)) throw new Error("Area must be one of: welcome, roleconfig, sticky.");
   await putStored(env, area, area === "sticky" ? {} : {});
   return `${area} reset.`;
 }
@@ -1715,6 +1797,7 @@ async function runCommand(env, interaction) {
     case "ping": return { embeds: [pingEmbed(interaction)] };
     case "status": return handleManifestStatusCommand(env, interaction);
     case "website": return { embeds: [createWebsiteEmbed()], components: websiteButton() };
+    case "onlinefix": return handleOnlineFixCommand(env, interaction);
     case "poll": return handlePoll(env, interaction);
     case "admin": return handleAdminCommand(env, interaction);
     case "channel": return handleChannelCommand(env, interaction);
@@ -1753,18 +1836,7 @@ async function runCommand(env, interaction) {
     case "lock": return setChannelLock(env, interaction, true);
     case "unlock": return setChannelLock(env, interaction, false);
     case "sticky": return handleSticky(env, interaction);
-    case "automod": return handleAutomod(env, interaction);
-    case "antispam":
-    case "antilink":
-    case "antiinvite":
-    case "antiscam":
-    case "antiraid":
-    case "antiemoji":
-    case "antimention":
-    case "antibot": return handleAutomodFeature(env, interaction);
-    case "wordfilter": return handleListConfig(env, interaction, "wordfilter", "word");
-    case "whitelist": return handleListConfig(env, interaction, "whitelist", "target");
-    case "blacklist": return handleListConfig(env, interaction, "blacklist", "target");
+
     case "role": return handleRole(env, interaction);
     case "autorole": return handleAutorole(env, interaction);
     case "reactionrole": return handleReactionRole(env, interaction);
@@ -1856,6 +1928,7 @@ const PUBLIC_COMMANDS = new Set([
   "history",
   "stats",
   "website",
+  "onlinefix",
   "poll",
   "avatar",
   "banner",
@@ -1910,10 +1983,20 @@ export async function handleInteraction(request, env, ctx) {
   if (interaction.type === INTERACTION_TYPE.PING) return pong();
   if (interaction.type === INTERACTION_TYPE.APPLICATION_COMMAND_AUTOCOMPLETE) {
     if (interaction.data.name === "gen") {
-      return autocompleteResponse(await searchSteamSuggestions(focusedAutocompleteValue(interaction)));
-    }
-    return autocompleteResponse([]);
+    return autocompleteResponse(await searchSteamSuggestions(focusedAutocompleteValue(interaction)));
   }
+  if (interaction.data.name === "onlinefix") {
+    const suggestions = await searchSteamSuggestions(focusedAutocompleteValue(interaction));
+    return autocompleteResponse(suggestions.map((s) => ({
+      name: s.name,
+      value: s.name.replace(/\s*\(\d+\)$/, "")
+    })));
+  }
+  if (interaction.data.name === "admin") {
+    return autocompleteResponse(await handleAdminAutocomplete(env, interaction));
+  }
+  return autocompleteResponse([]);
+}
   if (interaction.type === INTERACTION_TYPE.MESSAGE_COMPONENT) {
     const customId = interaction.data.custom_id || "";
     if (isManifestJobComponent(customId)) return handleManifestJobComponent(env, interaction, ctx);
@@ -1971,7 +2054,7 @@ export async function handleInteraction(request, env, ctx) {
 
   if (PUBLIC_COMMANDS.has(interaction.data.name)) {
     ctx.waitUntil(completeDeferredCommand(env, interaction));
-    return deferredResponse(!["website", "vote"].includes(interaction.data.name));
+    return deferredResponse(!["website", "vote", "onlinefix"].includes(interaction.data.name));
   }
 
   if (TICKET_COMMANDS.has(interaction.data.name)) {
@@ -2005,7 +2088,7 @@ async function handleSiteBackfill(request, env) {
       }
 
       const game = await fetchGameDetails(appId).catch(() => null);
-      const published = await autoPublishExternalPackage(env, appId, repositoryResult, game);
+      const published = await autoPublishExternalPackage(env, appId, repositoryResult, game, { env, game, source: repositoryResult.source, manifestSource: repositoryResult.manifestSource, manifestCount: repositoryResult.manifestCount || 0, elapsedMs: 0, user: "<@system>" });
       return jsonResponse({ ok: true, type: payload.type, appId, published }, 200, headers);
     }
 
@@ -2020,6 +2103,48 @@ async function handleSiteBackfill(request, env) {
   }
 }
 
+async function handleSiteGenLog(request, env) {
+  const headers = corsHeaders(env, request);
+
+  try {
+    if (request.method !== "POST") {
+      return jsonResponse({ ok: false, error: "Method not allowed." }, 405, headers);
+    }
+
+    const payload = await request.json();
+    const appId = normalizeAppId(payload?.appId || payload?.game?.appId || "");
+    const genlogChannel = await getChannelSetting(env, "genlog");
+    if (!genlogChannel) {
+      return jsonResponse({ ok: false, skipped: true, reason: "genlog-not-configured" }, 200, headers);
+    }
+
+    const game = payload.game && typeof payload.game === "object" ? { ...payload.game } : {};
+    game.appId ||= appId;
+    game.name ||= payload.gameName || `Steam App ${appId}`;
+    game.banner ||= payload.banner || payload.header_image || payload.game?.header_image;
+    if (payload.releaseDate && !game.releaseDate) game.releaseDate = payload.releaseDate;
+    if (payload.publisher && !game.publishers) game.publishers = [payload.publisher];
+
+    await sendChannelMessage(env, genlogChannel, "", {
+      embeds: [createGenLogEmbed({
+        game,
+        source: payload.source || "",
+        manifestSource: payload.manifestSource || "",
+        manifestCount: payload.manifestCount || 0,
+        fileSize: payload.fileSize || "",
+        elapsedMs: payload.elapsedMs || 0,
+        user: payload.user || (payload.genType === "app" ? "Colorado State RP App" : "Website"),
+        backfillStatus: payload.backfillStatus || "Generation completed.",
+        genType: payload.genType || "website"
+      })]
+    });
+
+    return jsonResponse({ ok: true }, 200, headers);
+  } catch (error) {
+    return jsonResponse({ ok: false, error: error.message || "Gen log failed." }, 500, headers);
+  }
+}
+
 async function handleHealth(request, env) {
   const headers = corsHeaders(env, request);
   const [health, queue] = await Promise.all([
@@ -2028,7 +2153,7 @@ async function handleHealth(request, env) {
   ]);
   return jsonResponse({
     ok: Boolean(health.ok),
-    service: "Charon Bot",
+    service: "Colorado State RP Bot",
     health,
     queue,
     time: new Date().toISOString()
@@ -2100,8 +2225,15 @@ export default {
       return handleSiteBackfill(request, env, ctx);
     }
 
+    if (url.pathname === "/api/gen-log") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(env, request) });
+      }
+      return handleSiteGenLog(request, env);
+    }
+
     if (request.method === "GET") {
-      return text("Charon Discord bot is running.");
+      return text("Colorado State RP Discord bot is running.");
     }
     if (request.method !== "POST") {
       return text("Method not allowed.", 405);

@@ -2,14 +2,14 @@ import jpeg from "jpeg-js";
 import { fetchWithTimeout, truncate } from "./utils.js";
 
 export const BRAND = {
-  name: "Charon Manifest Tool",
+  name: "Colorado State RP Manifest Tool",
   cyan: 0x05fff7,
   purple: 0x8b5cf6,
   neutral: 0x2f3441
 };
 
-const WEBSITE_URL = "https://charon.vyro.workers.dev/";
-const WEBSITE_LOGO_URL = "https://charon.vyro.workers.dev/images/icon-512.png";
+const WEBSITE_URL = "https://colorado-state-rp.vyro.workers.dev/";
+const WEBSITE_LOGO_URL = "https://colorado-state-rp.vyro.workers.dev/images/icon-512.png";
 
 function safeText(value, fallback = "Unknown") {
   const text = String(value || "").trim();
@@ -29,7 +29,7 @@ function releaseText(game) {
 
 function sourceLabel(source) {
   if (/external/i.test(source || "")) return "External API";
-  if (/charon|repo/i.test(source || "")) return "Charon Repo";
+  if (/colorado-state-rp|repo/i.test(source || "")) return "Colorado State RP Repo";
   return safeText(source, "Source ready");
 }
 
@@ -144,40 +144,43 @@ export async function extractImageAccentColor(imageUrl, seed = "") {
   }
 }
 
-export function createManifestEmbed({ game, source, manifestSource, elapsedMs, accentColor }) {
+export function createManifestEmbed({ game, source, manifestSource, manifestCount, elapsedMs, accentColor }) {
   const appId = safeText(game?.appId);
   const title = safeText(game?.name, `Steam App ${appId}`);
   const publisher = publisherText(game);
   const release = releaseText(game);
   const sourceName = sourceLabel(source);
-  const badges = [
-    badge(`🎮 AppID ${appId}`),
-    badge(`📅 ${release}`),
-    badge(`⚡ ${sourceName}`)
-  ];
-  const manifestBadge = manifestSource ? badge(`📦 ${manifestSource}`) : "";
+
+  const lines = [];
+  lines.push(`🎮 **${truncate(title, 220)}**`);
+  lines.push(`🏢 ${truncate(publisher, 240)}`);
+  lines.push("");
+  lines.push("─────────────────");
+  lines.push("");
+  lines.push("📋 **Information**");
+  lines.push("");
+  lines.push(`🔔 App ID: ${appId}`);
+  lines.push(`📅 Release Date: ${release}`);
+  lines.push("");
+  lines.push("📚 **Source**");
+  lines.push("");
+  lines.push(`⚡ ${sourceName}`);
+  if (manifestSource) lines.push(`📦 ${manifestSource}`);
+  lines.push("");
+  lines.push("─────────────────");
+  if (manifestCount > 0) {
+    lines.push("");
+    lines.push("📁 **Bundle**");
+    lines.push("");
+    lines.push(`📦 ${manifestCount} Manifest File${manifestCount === 1 ? "" : "s"} Bundled`);
+    lines.push("");
+    lines.push("─────────────────");
+  }
 
   const embed = {
-    title: "✅ Manifest Ready",
-    description: [
-      "Generated package successfully",
-      "",
-      `**${truncate(title, 220)}**`,
-      truncate(publisher, 240),
-      "",
-      badges.join(" "),
-      ...(manifestBadge ? [manifestBadge] : [])
-    ].join("\n"),
+    title: "📦 Manifest Package Ready",
+    description: lines.join("\n"),
     color: accentColor || fallbackAccent(appId),
-    fields: [{
-      name: "Status",
-      value: [
-        "✓ Metadata fetched",
-        "✓ Manifest generated",
-        "✓ Download ready"
-      ].join("\n"),
-      inline: false
-    }],
     timestamp: new Date().toISOString(),
     footer: { text: elapsedText(elapsedMs) }
   };
@@ -188,7 +191,6 @@ export function createManifestEmbed({ game, source, manifestSource, elapsedMs, a
 
   return embed;
 }
-
 export function createNoResultsEmbed(appId) {
   return {
     title: "🔍 Nothing Available Yet",
@@ -214,14 +216,14 @@ export function createNoResultsEmbed(appId) {
 
 export function createWebsiteEmbed() {
   return {
-    title: "🌐 CHARON WEBSITE",
+    title: "🌐 COLORADO STATE RP WEBSITE",
     url: WEBSITE_URL,
     description: [
-      "Everything Charon in one place.",
+      "Everything Colorado State RP in one place.",
       "",
       "━━━━━━━━━━━━━━",
-      "📦 Download Charon",
-      "⚙️ Use Charon Gen",
+      "📦 Download Colorado State RP",
+      "⚙️ Use Colorado State RP Gen",
       "📖 Read the Guide",
       "💬 Join the Community",
       "━━━━━━━━━━━━━━",
@@ -231,9 +233,57 @@ export function createWebsiteEmbed() {
     color: 0x5865f2,
     thumbnail: { url: WEBSITE_LOGO_URL },
     timestamp: new Date().toISOString(),
-    footer: { text: "Powered by Charon" }
+    footer: { text: "Powered by Colorado State RP" }
   };
 }
+
+
+export function createGenLogEmbed({ game, source, manifestSource, manifestCount, elapsedMs, user, backfillStatus, genType, fileSize }) {
+  const appId = safeText(game?.appId);
+  const title = safeText(game?.name, `Steam App ${appId}`);
+  const publisher = publisherText(game);
+  const release = releaseText(game);
+  const sourceName = sourceLabel(source);
+
+  const seconds = Math.max(0.1, elapsedMs / 1000);
+  const timeText = `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
+
+  const lines = [];
+  lines.push(`\uD83C\uDFAE **${truncate(title, 220)}**`);
+  lines.push(`\uD83C\uDFE2 ${truncate(publisher, 240)}`);
+  lines.push(`\uD83D\uDCC5 ${release}`);
+  lines.push("");
+  lines.push("\uD83D\uDCDA **Source**");
+  lines.push(`\u26A1 ${sourceName}`);
+  if (manifestSource) lines.push(`\uD83D\uDCE6 ${manifestSource}`);
+  if (manifestCount > 0) lines.push(`\uD83D\uDCC1 ${manifestCount} Manifest File${manifestCount === 1 ? "" : "s"}`);
+  if (fileSize) lines.push(`\uD83D\uDCE6 ${fileSize}`);
+  lines.push("");
+  lines.push("\u23F1 **Time**");
+  lines.push(`\uD83D\uDD50 ${timeText}`);
+  lines.push(`\uD83D\uDC64 ${user}`);
+  lines.push("");
+  lines.push("\uD83D\uDCE4 **Backfill**");
+  lines.push(backfillStatus);
+
+  const embed = {
+    author: {
+      name: genType === "website" ? "Website Gen" : genType === "app" ? "App Gen" : "Discord Gen",
+      icon_url: WEBSITE_LOGO_URL
+    },
+    description: lines.join("\n"),
+    color: BRAND.cyan,
+    timestamp: new Date().toISOString(),
+    footer: { text: `Gen Log - ${BRAND.name}` }
+  };
+
+  if (game?.banner) {
+    embed.thumbnail = { url: game.banner };
+  }
+
+  return embed;
+}
+
 
 export function websiteButton() {
   return [{
